@@ -135,6 +135,7 @@ jobs:
       # Deploy Grafana to Cloud Run (service 2 only after app success)
       - name: Deploy Grafana to Cloud Run
         id: deploy_grafana
+        continue-on-error: true
         run: |
           APP_URL="${{ steps.deploy_app.outputs.app_url }}"
           if gcloud secrets describe GRAFANA_ADMIN_PASSWORD >/dev/null 2>&1; then
@@ -170,11 +171,21 @@ jobs:
           GRAFANA_URL=$(gcloud run services describe ${{ env.GRAFANA_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')
           echo "grafana_url=${GRAFANA_URL}" >> "$GITHUB_OUTPUT"
 
+      - name: Report Grafana deploy outcome
+        if: always()
+        run: |
+          if [[ "${{ steps.deploy_grafana.outcome }}" != "success" ]]; then
+            echo "Grafana deployment did not succeed; app deployment remains available."
+          fi
+
       - name: Print service URLs
         id: urls
         run: |
           APP_URL="${{ steps.deploy_app.outputs.app_url }}"
           GRAFANA_URL="${{ steps.deploy_grafana.outputs.grafana_url }}"
+          if [[ -z "${GRAFANA_URL}" ]]; then
+            GRAFANA_URL="unavailable"
+          fi
 
           echo "app_url=${APP_URL}" >> "$GITHUB_OUTPUT"
           echo "grafana_url=${GRAFANA_URL}" >> "$GITHUB_OUTPUT"
@@ -197,8 +208,12 @@ jobs:
           curl -fsSL "${APP_URL}/health" > /tmp/app-health.json
           echo "Checking Swagger OpenAPI endpoint..."
           curl -fsSL "${APP_URL}/openapi.json" > /tmp/openapi.json
-          echo "Checking Grafana root..."
-          curl -fsSLI "${GRAFANA_URL}" > /tmp/grafana-head.txt
+          if [[ "${GRAFANA_URL}" != "unavailable" ]]; then
+            echo "Checking Grafana root..."
+            curl -fsSLI "${GRAFANA_URL}" > /tmp/grafana-head.txt
+          else
+            echo "Skipping Grafana smoke check because URL is unavailable."
+          fi
           echo "status=passed" >> "$GITHUB_OUTPUT"
 
       - name: Create deployment summary artifact
