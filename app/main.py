@@ -12,6 +12,7 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -318,7 +319,8 @@ async def chat(request: ChatRequest):
     sources = [ArticleRef(title=a.title, ticker=a.ticker, link=a.link) for a in articles]
     fallback_mode = False
     try:
-        answer = summarize_news(query, context)
+        # Offload sync model call to threadpool to avoid blocking event loop under load.
+        answer = await run_in_threadpool(summarize_news, query, context)
     except Exception as exc:
         logger.error("Vertex AI summarization failed: %s", exc)
         ERROR_COUNT.labels(type="vertex_ai_unavailable", endpoint="/api/chat").inc()

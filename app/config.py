@@ -15,6 +15,13 @@ class Settings(BaseSettings):
     vertex_model: str = os.getenv("VERTEX_MODEL", "gemini-3.1-flash-lite-preview")
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     use_vertex_ai: bool = os.getenv("USE_VERTEX_AI", "true").lower() == "true"
+    vertex_max_retries: int = int(os.getenv("VERTEX_MAX_RETRIES", "3"))
+    vertex_retry_base_seconds: float = float(os.getenv("VERTEX_RETRY_BASE_SECONDS", "0.8"))
+    vertex_max_in_flight: int = int(os.getenv("VERTEX_MAX_IN_FLIGHT", "8"))
+    vertex_circuit_threshold: int = int(os.getenv("VERTEX_CIRCUIT_THRESHOLD", "4"))
+    vertex_circuit_cooldown_seconds: int = int(os.getenv("VERTEX_CIRCUIT_COOLDOWN_SECONDS", "45"))
+    summary_cache_ttl_seconds: int = int(os.getenv("SUMMARY_CACHE_TTL_SECONDS", "120"))
+    summary_cache_max_entries: int = int(os.getenv("SUMMARY_CACHE_MAX_ENTRIES", "512"))
 
     # App
     app_name: str = "FinChat"

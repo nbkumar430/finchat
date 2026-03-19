@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import threading
 import time
+from collections import OrderedDict
+from typing import Optional
 
 from google import genai
 from google.genai import types
@@ -17,6 +21,12 @@ _client: genai.Client | None = None
 _health_cache_status: str = "degraded"
 _health_cache_ts: float = 0.0
 _HEALTH_TTL_SECONDS = 60.0
+_state_lock = threading.Lock()
+_cache_lock = threading.Lock()
+_cache: OrderedDict[str, tuple[float, str]] = OrderedDict()
+_concurrency_sem: Optional[threading.BoundedSemaphore] = None  # noqa: UP007 (py3.9 compat)
+_failure_streak = 0
+_circuit_open_until = 0.0
 
 
 def init_vertex() -> None:
@@ -46,6 +56,69 @@ def init_vertex() -> None:
         raise RuntimeError(
             "No AI backend configured. Set USE_VERTEX_AI=true (recommended) or provide GEMINI_API_KEY."
         )
+    _initialize_concurrency_guard()
+
+
+def _initialize_concurrency_guard() -> None:
+    global _concurrency_sem
+    if _concurrency_sem is None:
+        max_in_flight = max(1, get_settings().vertex_max_in_flight)
+        _concurrency_sem = threading.BoundedSemaphore(value=max_in_flight)
+
+
+def _cache_key(query: str, context: str, model: str) -> str:
+    digest = hashlib.sha256(f"{model}\n{query}\n{context}".encode()).hexdigest()
+    return digest
+
+
+def _cache_get(key: str) -> Optional[str]:  # noqa: UP007 (py3.9 compat)
+    settings = get_settings()
+    now = time.time()
+    with _cache_lock:
+        item = _cache.get(key)
+        if not item:
+            return None
+        ts, text = item
+        if now - ts > settings.summary_cache_ttl_seconds:
+            _cache.pop(key, None)
+            return None
+        _cache.move_to_end(key)
+        return text
+
+
+def _cache_put(key: str, text: str) -> None:
+    settings = get_settings()
+    now = time.time()
+    with _cache_lock:
+        _cache[key] = (now, text)
+        _cache.move_to_end(key)
+        while len(_cache) > settings.summary_cache_max_entries:
+            _cache.popitem(last=False)
+
+
+def _is_transient_error(exc: Exception) -> bool:
+    text = str(exc).upper()
+    return any(marker in text for marker in ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "TIMEOUT"))
+
+
+def _is_circuit_open() -> bool:
+    with _state_lock:
+        return time.time() < _circuit_open_until
+
+
+def _record_success() -> None:
+    global _failure_streak
+    with _state_lock:
+        _failure_streak = 0
+
+
+def _record_failure() -> None:
+    global _failure_streak, _circuit_open_until
+    settings = get_settings()
+    with _state_lock:
+        _failure_streak += 1
+        if _failure_streak >= settings.vertex_circuit_threshold:
+            _circuit_open_until = time.time() + float(settings.vertex_circuit_cooldown_seconds)
 
 
 def get_vertex_backend_status() -> str:
@@ -105,8 +178,20 @@ def summarize_news(query: str, context: str) -> str:
         init_vertex()
     if _client is None:
         raise RuntimeError("Gemini AI initialization failed.")
+    _initialize_concurrency_guard()
 
     settings = get_settings()
+    if _is_circuit_open():
+        raise RuntimeError("AI backend temporarily overloaded (circuit open).")
+
+    # Bound prompt size to reduce token pressure during spikes.
+    context = context[:7000]
+    cache_key = _cache_key(query=query, context=context, model=settings.vertex_model)
+    cached_answer = _cache_get(cache_key)
+    if cached_answer is not None:
+        logger.info("Gemini cache hit for model=%s", settings.vertex_model)
+        return cached_answer
+
     prompt = f"""You are FinChat, a financial news assistant with STRICT operating boundaries.
 
 SCOPE: You only have knowledge about these stock tickers: AAPL, MSFT, AMZN, NFLX, NVDA, INTC, IBM.
@@ -136,28 +221,59 @@ User question: {query}
 Answer strictly and only from the articles above:"""
 
     start = time.perf_counter()
+    sem = _concurrency_sem
+    if sem is None:
+        raise RuntimeError("AI concurrency guard not initialized.")
+    acquired = sem.acquire(timeout=1.5)
+    if not acquired:
+        raise RuntimeError("AI backend busy; too many concurrent requests.")
     try:
-        response = _client.models.generate_content(
-            model=settings.vertex_model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.3,
-                max_output_tokens=1024,
-                top_p=0.8,
-            ),
-        )
+        last_exc: Optional[Exception] = None  # noqa: UP007 (py3.9 compat)
+        for attempt in range(settings.vertex_max_retries):
+            try:
+                response = _client.models.generate_content(
+                    model=settings.vertex_model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.3,
+                        max_output_tokens=768,
+                        top_p=0.8,
+                    ),
+                )
+                if not response.text:
+                    raise RuntimeError("Gemini AI returned an empty response.")
+                elapsed = time.perf_counter() - start
+                VERTEX_LATENCY.labels(model=settings.vertex_model).observe(elapsed)
+                logger.info("Gemini AI response in %.2fs", elapsed, extra={"latency_ms": elapsed * 1000})
+                _health_cache_status = "up"
+                _health_cache_ts = time.time()
+                _record_success()
+                _cache_put(cache_key, response.text)
+                return response.text
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if not _is_transient_error(exc) or attempt >= settings.vertex_max_retries - 1:
+                    raise
+                backoff = settings.vertex_retry_base_seconds * (2**attempt)
+                logger.warning(
+                    "Transient AI failure model=%s attempt=%d/%d backoff=%.2fs error=%s",
+                    settings.vertex_model,
+                    attempt + 1,
+                    settings.vertex_max_retries,
+                    backoff,
+                    exc,
+                )
+                time.sleep(backoff)
+        if last_exc:
+            raise last_exc
         elapsed = time.perf_counter() - start
         VERTEX_LATENCY.labels(model=settings.vertex_model).observe(elapsed)
-        logger.info("Gemini AI response in %.2fs", elapsed, extra={"latency_ms": elapsed * 1000})
-        if not response.text:
-            raise RuntimeError("Gemini AI returned an empty response.")
-        _health_cache_status = "up"
-        _health_cache_ts = time.time()
-        return response.text
+        raise RuntimeError("Gemini AI failed without explicit exception.")
     except Exception as exc:
         elapsed = time.perf_counter() - start
         VERTEX_LATENCY.labels(model=settings.vertex_model).observe(elapsed)
         VERTEX_ERRORS.labels(model=settings.vertex_model, error_type=type(exc).__name__).inc()
+        _record_failure()
         logger.error(
             "Gemini AI call failed for model=%s backend=%s: %s",
             settings.vertex_model,
@@ -168,3 +284,5 @@ Answer strictly and only from the articles above:"""
         _health_cache_status = "degraded"
         _health_cache_ts = time.time()
         raise
+    finally:
+        sem.release()
