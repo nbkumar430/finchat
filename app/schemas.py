@@ -17,7 +17,7 @@ class ChatRequest(BaseModel):
         description="User's question about financial news",
         json_schema_extra={"example": "What is the latest news about Apple?"},
     )
-    ticker: Optional[str] = Field(
+    ticker: Optional[str] = Field(  # noqa: UP007 (py3.9 compat)
         None,
         description="Optional ticker symbol to filter news (e.g., AAPL, MSFT)",
         json_schema_extra={"example": "AAPL"},
@@ -40,7 +40,7 @@ class ChatResponse(BaseModel):
         default_factory=list,
         description="Source articles used for the answer",
     )
-    ticker_filter: Optional[str] = Field(
+    ticker_filter: Optional[str] = Field(  # noqa: UP007 (py3.9 compat)
         None,
         description="Ticker filter applied, if any",
     )
@@ -59,4 +59,4 @@ class ErrorResponse(BaseModel):
     """Standard error response."""
 
     error: str
-    detail: Optional[str] = None
+    detail: Optional[str] = None  # noqa: UP007 (py3.9 compat)

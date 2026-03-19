@@ -27,7 +27,7 @@ env:
   GRAFANA_SERVICE: finchat-grafana
   AR_REPO: finchat-repo
   SECRET_NAME: GEMINI_API_KEY
-  API_KEY_UID: e5dbaa75-c3e0-4f4a-9f1b-4fd1fd634ed6
+  GRAFANA_SECRET_NAME: GRAFANA_ADMIN_PASSWORD
   APP_SA: finchat-app-sa@project-ede0958a-eb5c-4225-94d.iam.gserviceaccount.com
   DEPLOY_SA: finchat-deploy-sa@project-ede0958a-eb5c-4225-94d.iam.gserviceaccount.com
   COMPUTE_SA: 335507671966-compute@developer.gserviceaccount.com
@@ -116,15 +116,15 @@ jobs:
           gcloud secrets delete ${{ env.SECRET_NAME }} --quiet || true
         continue-on-error: true
 
-      # ── Step 4: GCP API key ──────────────────────────────────────
-      - name: "4/7 Delete API key: ${{ env.API_KEY_UID }}"
+      # ── Step 4: delete Grafana secret ────────────────────────────
+      - name: "4/6 Delete Secret: ${{ env.GRAFANA_SECRET_NAME }}"
         if: github.event.inputs.mode == 'execute'
         run: |
-          gcloud services api-keys delete ${{ env.API_KEY_UID }} --quiet || true
+          gcloud secrets delete ${{ env.GRAFANA_SECRET_NAME }} --quiet || true
         continue-on-error: true
 
       # ── Step 5: IAM bindings ─────────────────────────────────────
-      - name: "5/7 Remove IAM bindings"
+      - name: "5/6 Remove IAM bindings"
         if: github.event.inputs.mode == 'execute'
         run: |
           remove_binding() {
@@ -146,15 +146,15 @@ jobs:
         continue-on-error: true
 
       # ── Step 6: Service accounts ─────────────────────────────────
-      - name: "6/7 Delete service accounts"
+      - name: "6/6 Delete service accounts"
         if: github.event.inputs.mode == 'execute'
         run: |
           gcloud iam service-accounts delete ${{ env.APP_SA }}    --quiet || true
           gcloud iam service-accounts delete ${{ env.DEPLOY_SA }} --quiet || true
         continue-on-error: true
 
-      # ── Step 7: Workload Identity Pool ───────────────────────────
-      - name: "7/7 Delete Workload Identity Pool & Provider"
+      # ── Workload Identity Pool deletion
+      - name: "Delete Workload Identity Pool & Provider"
         if: github.event.inputs.mode == 'execute'
         run: |
           gcloud iam workload-identity-pools providers delete \
@@ -199,9 +199,7 @@ jobs:
           echo ""
           echo "Secret Manager:"
           echo "  - ${{ env.SECRET_NAME }}"
-          echo ""
-          echo "GCP API Key:"
-          echo "  - UID: ${{ env.API_KEY_UID }}"
+          echo "  - ${{ env.GRAFANA_SECRET_NAME }}"
           echo ""
           echo "IAM Bindings removed from:"
           echo "  - ${{ env.APP_SA }}"

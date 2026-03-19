@@ -44,6 +44,7 @@ using Google Vertex AI (Gemini 2.0 Flash).
 | `schemas.py`      | Pydantic request/response models (OpenAPI/Swagger)   |
 | `metrics.py`      | Prometheus counters, histograms, gauges              |
 | `logging_config.py`| Structured JSON logging (Cloud Logging compatible)  |
+| `tracing.py`      | OpenTelemetry tracing + FastAPI instrumentation      |
 | `config.py`       | Env-based configuration via pydantic-settings        |
 
 ### 2. Grafana Dashboard (`grafana/`)
@@ -79,7 +80,7 @@ push to main ─► lint (ruff) ─► test (pytest) ─► build (Docker) ─�
 | Concern                | Approach                                            |
 |------------------------|-----------------------------------------------------|
 | No credentials in repo | Workload Identity Federation for CI/CD auth         |
-| Secrets management     | Grafana password via GitHub Secrets → Cloud Run env |
+| Secrets management     | Secret Manager (Gemini key, Grafana admin password) |
 | Container security     | Non-root user, multi-stage build, slim base image   |
 | API authentication     | Cloud Run IAM (optional); public for demo           |
 | Network                | HTTPS-only (Cloud Run enforces TLS)                 |

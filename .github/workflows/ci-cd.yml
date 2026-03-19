@@ -14,6 +14,7 @@ env:
   GRAFANA_IMAGE: finchat-grafana
   APP_SERVICE: finchat-app
   GRAFANA_SERVICE: finchat-grafana
+  APP_RUNTIME_SA: finchat-app-sa@project-ede0958a-eb5c-4225-94d.iam.gserviceaccount.com
 
 permissions:
   contents: read
@@ -116,6 +117,7 @@ jobs:
             --cpu 1 \
             --min-instances 0 \
             --max-instances 5 \
+            --service-account ${{ env.APP_RUNTIME_SA }} \
             --set-env-vars "GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},LOG_LEVEL=INFO" \
             --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest"
 
@@ -133,13 +135,111 @@ jobs:
             --cpu 1 \
             --min-instances 0 \
             --max-instances 2 \
-            --set-env-vars "PROMETHEUS_URL=${APP_URL}/metrics,GF_SECURITY_ADMIN_PASSWORD=${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
+            --service-account ${{ env.APP_RUNTIME_SA }} \
+            --set-env-vars "PROMETHEUS_URL=${APP_URL}/metrics" \
+            --set-secrets "GF_SECURITY_ADMIN_PASSWORD=GRAFANA_ADMIN_PASSWORD:latest"
 
       - name: Print service URLs
+        id: urls
         run: |
+          APP_URL=$(gcloud run services describe ${{ env.APP_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')
+          GRAFANA_URL=$(gcloud run services describe ${{ env.GRAFANA_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')
+
+          echo "app_url=${APP_URL}" >> "$GITHUB_OUTPUT"
+          echo "grafana_url=${GRAFANA_URL}" >> "$GITHUB_OUTPUT"
+
           echo "=== Deployment Complete ==="
           echo "App URL:"
-          gcloud run services describe ${{ env.APP_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)'
+          echo "${APP_URL}"
           echo "Grafana URL:"
-          gcloud run services describe ${{ env.GRAFANA_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)'
-          echo "Swagger UI: $(gcloud run services describe ${{ env.APP_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')/docs"
+          echo "${GRAFANA_URL}"
+          echo "Swagger UI: ${APP_URL}/docs"
+
+      - name: Smoke test deployed endpoints
+        id: smoke
+        run: |
+          set -euo pipefail
+          APP_URL="${{ steps.urls.outputs.app_url }}"
+          GRAFANA_URL="${{ steps.urls.outputs.grafana_url }}"
+
+          echo "Checking app health endpoint..."
+          curl -fsSL "${APP_URL}/health" > /tmp/app-health.json
+          echo "Checking Swagger OpenAPI endpoint..."
+          curl -fsSL "${APP_URL}/openapi.json" > /tmp/openapi.json
+          echo "Checking Grafana root..."
+          curl -fsSLI "${GRAFANA_URL}" > /tmp/grafana-head.txt
+          echo "status=passed" >> "$GITHUB_OUTPUT"
+
+      - name: Create deployment summary artifact
+        run: |
+          APP_URL="${{ steps.urls.outputs.app_url }}"
+          GRAFANA_URL="${{ steps.urls.outputs.grafana_url }}"
+          SMOKE_STATUS="${{ steps.smoke.outputs.status }}"
+          python3 << 'PYEOF'
+          import json
+          import os
+          from datetime import datetime, timezone
+
+          app_url = os.environ["APP_URL"]
+          grafana_url = os.environ["GRAFANA_URL"]
+          smoke_status = os.environ.get("SMOKE_STATUS", "unknown")
+          payload = {
+              "service": "finchat",
+              "environment": "prod",
+              "deployed_at_utc": datetime.now(timezone.utc).isoformat(),
+              "project_id": "project-ede0958a-eb5c-4225-94d",
+              "region": "us-central1",
+              "commit_sha": os.environ.get("GITHUB_SHA", ""),
+              "urls": {
+                  "app": app_url,
+                  "swagger": f"{app_url}/docs",
+                  "redoc": f"{app_url}/redoc",
+                  "openapi": f"{app_url}/openapi.json",
+                  "grafana": grafana_url,
+              },
+              "smoke_test": {
+                  "status": smoke_status,
+                  "checks": [
+                      f"GET {app_url}/health",
+                      f"GET {app_url}/openapi.json",
+                      f"HEAD {grafana_url}",
+                  ],
+              },
+          }
+          with open("/tmp/deployment-summary.json", "w", encoding="utf-8") as f:
+              json.dump(payload, f, indent=2)
+          print("Wrote /tmp/deployment-summary.json")
+          PYEOF
+        env:
+          APP_URL: ${{ steps.urls.outputs.app_url }}
+          GRAFANA_URL: ${{ steps.urls.outputs.grafana_url }}
+          SMOKE_STATUS: ${{ steps.smoke.outputs.status }}
+
+      - name: Upload deployment summary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-summary-${{ github.sha }}
+          path: /tmp/deployment-summary.json
+          retention-days: 30
+
+      - name: Publish deployment summary
+        run: |
+          APP_URL="${{ steps.urls.outputs.app_url }}"
+          GRAFANA_URL="${{ steps.urls.outputs.grafana_url }}"
+          {
+            echo "## FinChat Deployment Summary"
+            echo ""
+            echo "- **App URL:** ${APP_URL}"
+            echo "- **Swagger UI:** ${APP_URL}/docs"
+            echo "- **ReDoc:** ${APP_URL}/redoc"
+            echo "- **Grafana URL:** ${GRAFANA_URL}"
+            echo ""
+            echo "### Smoke Test"
+            echo "- App health: \`GET ${APP_URL}/health\`"
+            echo "- OpenAPI: \`GET ${APP_URL}/openapi.json\`"
+            echo "- Grafana: \`HEAD ${GRAFANA_URL}\`"
+            echo ""
+            echo "### Build Info"
+            echo "- Commit SHA: \`${GITHUB_SHA}\`"
+            echo "- Region: \`${{ env.REGION }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -58,7 +58,7 @@ class NewsStore:
     def search(
         self,
         query: str,
-        ticker: Optional[str] = None,
+        ticker: Optional[str] = None,  # noqa: UP007 (py3.9 compat)
         max_results: int = 5,
     ) -> list[Article]:
         """Search articles by keyword and optional ticker filter."""

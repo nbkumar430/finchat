@@ -25,6 +25,7 @@ gcloud services enable \
   run.googleapis.com \
   aiplatform.googleapis.com \
   secretmanager.googleapis.com \
+  cloudbilling.googleapis.com \
   iam.googleapis.com \
   iamcredentials.googleapis.com \
   cloudresourcemanager.googleapis.com
@@ -49,6 +50,12 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --role="roles/aiplatform.user" \
   --condition=None --quiet
 
+# Grant Secret Manager access to runtime SA
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${APP_SA_EMAIL}" \
+  --role="roles/secretmanager.secretAccessor" \
+  --condition=None --quiet
+
 echo "=== Creating Deploy Service Account ==="
 gcloud iam service-accounts create "$DEPLOY_SA" \
   --display-name="FinChat Deploy SA (GitHub Actions)" \
@@ -67,6 +74,15 @@ for role in \
     --role="$role" \
     --condition=None --quiet
 done
+
+echo "=== Creating required secrets (if absent) ==="
+gcloud secrets create GEMINI_API_KEY \
+  --replication-policy="automatic" \
+  2>/dev/null || echo "Secret GEMINI_API_KEY already exists"
+
+gcloud secrets create GRAFANA_ADMIN_PASSWORD \
+  --replication-policy="automatic" \
+  2>/dev/null || echo "Secret GRAFANA_ADMIN_PASSWORD already exists"
 
 echo "=== Setting up Workload Identity Federation ==="
 # Create WIF pool
@@ -104,7 +120,10 @@ echo ""
 echo "Add these as GitHub Secrets:"
 echo "  WIF_PROVIDER: ${WIF_PROVIDER_RESOURCE}"
 echo "  WIF_SA_EMAIL: ${DEPLOY_SA_EMAIL}"
-echo "  GRAFANA_ADMIN_PASSWORD: <choose a secure password>"
+echo ""
+echo "Then add Secret Manager values:"
+echo "  echo -n '<gemini-api-key>' | gcloud secrets versions add GEMINI_API_KEY --data-file=-"
+echo "  echo -n '<grafana-admin-password>' | gcloud secrets versions add GRAFANA_ADMIN_PASSWORD --data-file=-"
 echo ""
 echo "App SA (for Cloud Run): ${APP_SA_EMAIL}"
 echo ""
