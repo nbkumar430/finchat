@@ -76,6 +76,7 @@ def test_root_returns_html(client):
 
 # ── Guardrail tests ───────────────────────────────────────────────────
 
+
 def test_guardrail_unsupported_ticker(client):
     """Requests for tickers not in the dataset must be rejected gracefully."""
     for bad_ticker in ("TSLA", "GOOGL", "META", "AMGN", "XYZ"):
@@ -83,9 +84,9 @@ def test_guardrail_unsupported_ticker(client):
         assert resp.status_code == 200, f"Expected 200 for ticker {bad_ticker}"
         data = resp.json()
         answer = data["answer"].lower()
-        assert "scope" in answer or "not in my knowledge" in answer, (
-            f"Expected out-of-scope message for ticker {bad_ticker}, got: {data['answer']}"
-        )
+        assert (
+            "scope" in answer or "not in my knowledge" in answer
+        ), f"Expected out-of-scope message for ticker {bad_ticker}, got: {data['answer']}"
         assert data["sources"] == [], f"Expected no sources for unsupported ticker {bad_ticker}"
 
 
@@ -103,9 +104,7 @@ def test_guardrail_off_topic_query(client):
         assert resp.status_code == 200, f"Expected 200 for off-topic query: {query}"
         data = resp.json()
         answer = data["answer"].lower()
-        assert "scope" in answer, (
-            f"Expected out-of-scope message for query '{query}', got: {data['answer']}"
-        )
+        assert "scope" in answer, f"Expected out-of-scope message for query '{query}', got: {data['answer']}"
         assert data["sources"] == [], f"Expected no sources for off-topic query: {query}"
 
 
@@ -125,9 +124,9 @@ def test_guardrail_supported_tickers_pass(client):
             resp = client.post("/api/chat", json={"query": query, "ticker": ticker})
             assert resp.status_code == 200, f"Expected 200 for {ticker}"
             data = resp.json()
-            assert "scope" not in data["answer"].lower(), (
-                f"Supported ticker {ticker} was incorrectly blocked: {data['answer']}"
-            )
+            assert (
+                "scope" not in data["answer"].lower()
+            ), f"Supported ticker {ticker} was incorrectly blocked: {data['answer']}"
 
 
 def test_guardrail_company_name_in_query_passes(client):
@@ -145,9 +144,9 @@ def test_guardrail_company_name_in_query_passes(client):
             resp = client.post("/api/chat", json={"query": query})
             assert resp.status_code in (200, 503), f"Unexpected status for query: {query}"
             data = resp.json()
-            assert "scope" not in data.get("answer", "").lower(), (
-                f"Company-name query '{query}' was incorrectly blocked"
-            )
+            assert (
+                "scope" not in data.get("answer", "").lower()
+            ), f"Company-name query '{query}' was incorrectly blocked"
 
 
 def test_guardrail_case_insensitive_ticker(client):
@@ -157,6 +156,4 @@ def test_guardrail_case_insensitive_ticker(client):
             resp = client.post("/api/chat", json={"query": "Apple news", "ticker": ticker_input})
             assert resp.status_code == 200
             data = resp.json()
-            assert "scope" not in data["answer"].lower(), (
-                f"Ticker {ticker_input} was incorrectly blocked"
-            )
+            assert "scope" not in data["answer"].lower(), f"Ticker {ticker_input} was incorrectly blocked"

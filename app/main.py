@@ -42,9 +42,7 @@ logger = logging.getLogger(__name__)
 
 # ── Guardrail constants ───────────────────────────────────────────────
 # Only these tickers are supported — derived from the bundled stock_news.json
-SUPPORTED_TICKERS: frozenset[str] = frozenset(
-    {"AAPL", "MSFT", "AMZN", "NFLX", "NVDA", "INTC", "IBM"}
-)
+SUPPORTED_TICKERS: frozenset[str] = frozenset({"AAPL", "MSFT", "AMZN", "NFLX", "NVDA", "INTC", "IBM"})
 
 # Company-name synonyms mapped to their ticker for query intent detection
 _TICKER_SYNONYMS: dict[str, frozenset[str]] = {
@@ -58,9 +56,7 @@ _TICKER_SYNONYMS: dict[str, frozenset[str]] = {
 }
 
 # Flat set of all keywords for fast query scanning
-_ALL_SCOPE_KEYWORDS: frozenset[str] = frozenset(
-    kw for synonyms in _TICKER_SYNONYMS.values() for kw in synonyms
-)
+_ALL_SCOPE_KEYWORDS: frozenset[str] = frozenset(kw for synonyms in _TICKER_SYNONYMS.values() for kw in synonyms)
 
 _OUT_OF_SCOPE_MSG = (
     "⚠️ I'm out of my scope. I can only answer questions about financial news "
