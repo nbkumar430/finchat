@@ -315,11 +315,13 @@ async def chat(request: ChatRequest):
 
     # Call Vertex AI for summarization
     sources = [ArticleRef(title=a.title, ticker=a.ticker, link=a.link) for a in articles]
+    fallback_mode = False
     try:
         answer = summarize_news(query, context)
     except Exception as exc:
         logger.error("Vertex AI summarization failed: %s", exc)
         ERROR_COUNT.labels(type="vertex_ai_unavailable", endpoint="/api/chat").inc()
         answer = _build_grounded_fallback_answer(query=query, sources=sources)
+        fallback_mode = True
 
-    return ChatResponse(answer=answer, sources=sources, ticker_filter=ticker)
+    return ChatResponse(answer=answer, sources=sources, ticker_filter=ticker, fallback_mode=fallback_mode)

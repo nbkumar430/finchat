@@ -60,6 +60,7 @@ def test_chat_success(mock_summarize, client):
     data = resp.json()
     assert "answer" in data
     assert "sources" in data
+    assert data["fallback_mode"] is False
 
 
 @patch("app.main.summarize_news", side_effect=Exception("API error"))
@@ -69,6 +70,7 @@ def test_chat_vertex_failure(mock_summarize, client):
     body = resp.json()
     assert "temporarily unavailable" in body["answer"].lower()
     assert len(body["sources"]) >= 1
+    assert body["fallback_mode"] is True
 
 
 def test_root_returns_html(client):

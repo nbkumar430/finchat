@@ -46,6 +46,18 @@
     font-weight: 500; }
   .input-row button:hover { background: var(--accent-hover); }
   .input-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .status-banner {
+    max-width: 800px;
+    width: calc(100% - 2rem);
+    margin: 0.75rem auto 0;
+    background: #7c2d12;
+    color: #ffedd5;
+    border: 1px solid #c2410c;
+    border-radius: 10px;
+    padding: 0.65rem 0.9rem;
+    font-size: 0.9rem;
+    display: none;
+  }
   .typing { opacity: 0.7; font-style: italic; }
   .welcome { text-align: center; padding: 2rem; color: var(--muted); }
   .welcome h2 { color: var(--text); margin-bottom: 0.5rem; }
@@ -77,6 +89,9 @@
     </div>
   </div>
 </div>
+<div id="fallbackBanner" class="status-banner" role="status" aria-live="polite">
+  Fallback mode active: AI summarization is temporarily unavailable. Responses are grounded from article headlines only.
+</div>
 
 <div class="input-area">
   <div class="input-row">
@@ -101,6 +116,7 @@ const msgContainer = document.getElementById('messages');
 const queryInput = document.getElementById('query');
 const tickerSelect = document.getElementById('ticker');
 const sendBtn = document.getElementById('sendBtn');
+const fallbackBanner = document.getElementById('fallbackBanner');
 
 function addMessage(text, role, sources) {
   const welcome = document.querySelector('.welcome');
@@ -156,6 +172,7 @@ async function sendChat() {
     const data = await resp.json();
     typing.remove();
     if (resp.ok) {
+      fallbackBanner.style.display = data.fallback_mode ? 'block' : 'none';
       addMessage(data.answer, 'bot', data.sources);
     } else {
       addMessage(`Error: ${data.detail || data.error || 'Something went wrong'}`, 'bot');

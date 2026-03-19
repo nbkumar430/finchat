@@ -44,6 +44,10 @@ class ChatResponse(BaseModel):
         None,
         description="Ticker filter applied, if any",
     )
+    fallback_mode: bool = Field(
+        False,
+        description="True when response uses non-AI grounded fallback mode",
+    )
 
 
 class HealthResponse(BaseModel):
