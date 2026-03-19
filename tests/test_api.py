@@ -11,6 +11,7 @@ def client():
     """Create test client with mocked Vertex AI."""
     with patch("app.main.init_vertex"):
         from app.main import app
+
         with TestClient(app) as c:
             yield c
 

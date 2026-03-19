@@ -61,11 +61,13 @@ async def lifespan(app: FastAPI):
         logger.warning("Vertex AI init failed (will retry on first request): %s", exc)
 
     # Set app info metric
-    APP_INFO.info({
-        "version": settings.app_version,
-        "model": settings.vertex_model,
-        "project": settings.gcp_project_id,
-    })
+    APP_INFO.info(
+        {
+            "version": settings.app_version,
+            "model": settings.vertex_model,
+            "project": settings.gcp_project_id,
+        }
+    )
 
     yield
     logger.info("Application shutting down")
@@ -219,10 +221,8 @@ async def chat(request: ChatRequest):
     articles = news_store.search(query, ticker=ticker, max_results=5)
 
     if not articles and ticker:
-
-
         # Fallback: get latest articles for that ticker
-            articles = news_store.get_by_ticker(ticker, limit=3)
+        articles = news_store.get_by_ticker(ticker, limit=3)
 
     if not articles:
         return ChatResponse(
@@ -238,9 +238,7 @@ async def chat(request: ChatRequest):
     context_parts = []
     for i, article in enumerate(articles, 1):
         context_parts.append(
-            f"[Article {i}] Ticker: {article.ticker}\n"
-            f"Title: {article.title}\n"
-            f"Content: {article.full_text[:1500]}\n"
+            f"[Article {i}] Ticker: {article.ticker}\nTitle: {article.title}\nContent: {article.full_text[:1500]}\n"
         )
     context = "\n---\n".join(context_parts)
 
@@ -254,9 +252,6 @@ async def chat(request: ChatRequest):
             detail="AI summarization service is temporarily unavailable. Please try again.",
         ) from exc
 
-    sources = [
-        ArticleRef(title=a.title, ticker=a.ticker, link=a.link)
-        for a in articles
-    ]
+    sources = [ArticleRef(title=a.title, ticker=a.ticker, link=a.link) for a in articles]
 
     return ChatResponse(answer=answer, sources=sources, ticker_filter=ticker)
