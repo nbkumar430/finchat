@@ -104,8 +104,9 @@ jobs:
           docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.GRAFANA_IMAGE }}:${{ github.sha }}
           docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.GRAFANA_IMAGE }}:latest
 
-      # Deploy app to Cloud Run
+      # Deploy app to Cloud Run (service 1)
       - name: Deploy app to Cloud Run
+        id: deploy_app
         run: |
           gcloud run deploy ${{ env.APP_SERVICE }} \
             --image ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.APP_IMAGE }}:${{ github.sha }} \
@@ -120,11 +121,22 @@ jobs:
             --service-account ${{ env.APP_RUNTIME_SA }} \
             --set-env-vars "GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},LOG_LEVEL=INFO" \
             --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest"
-
-      # Deploy Grafana to Cloud Run
-      - name: Deploy Grafana to Cloud Run
-        run: |
           APP_URL=$(gcloud run services describe ${{ env.APP_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')
+          echo "app_url=${APP_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify app deployment before Grafana
+        run: |
+          set -euo pipefail
+          APP_URL="${{ steps.deploy_app.outputs.app_url }}"
+          echo "App deployed at: ${APP_URL}"
+          curl -fsSL "${APP_URL}/health" > /tmp/app-health-pre-grafana.json
+          curl -fsSL "${APP_URL}/openapi.json" > /tmp/openapi-pre-grafana.json
+
+      # Deploy Grafana to Cloud Run (service 2 only after app success)
+      - name: Deploy Grafana to Cloud Run
+        id: deploy_grafana
+        run: |
+          APP_URL="${{ steps.deploy_app.outputs.app_url }}"
           if gcloud secrets describe GRAFANA_ADMIN_PASSWORD >/dev/null 2>&1; then
             echo "Using Secret Manager for Grafana admin password."
             gcloud run deploy ${{ env.GRAFANA_SERVICE }} \
@@ -155,12 +167,14 @@ jobs:
               --service-account ${{ env.APP_RUNTIME_SA }} \
               --set-env-vars "PROMETHEUS_URL=${APP_URL}/metrics,GF_SECURITY_ADMIN_PASSWORD=${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           fi
+          GRAFANA_URL=$(gcloud run services describe ${{ env.GRAFANA_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')
+          echo "grafana_url=${GRAFANA_URL}" >> "$GITHUB_OUTPUT"
 
       - name: Print service URLs
         id: urls
         run: |
-          APP_URL=$(gcloud run services describe ${{ env.APP_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')
-          GRAFANA_URL=$(gcloud run services describe ${{ env.GRAFANA_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')
+          APP_URL="${{ steps.deploy_app.outputs.app_url }}"
+          GRAFANA_URL="${{ steps.deploy_grafana.outputs.grafana_url }}"
 
           echo "app_url=${APP_URL}" >> "$GITHUB_OUTPUT"
           echo "grafana_url=${GRAFANA_URL}" >> "$GITHUB_OUTPUT"
