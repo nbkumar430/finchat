@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinChat – Financial News Assistant</title>
+<style>
+  :root {
+    --bg: #0f172a; --surface: #1e293b; --border: #334155;
+    --text: #f1f5f9; --muted: #94a3b8; --accent: #3b82f6;
+    --accent-hover: #2563eb; --green: #22c55e; --red: #ef4444;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh; display: flex;
+    flex-direction: column; }
+  header { background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 1rem 1.5rem; display: flex; align-items: center; gap: 1rem; }
+  header h1 { font-size: 1.25rem; font-weight: 600; }
+  header .badge { background: var(--accent); color: white; font-size: 0.7rem;
+    padding: 2px 8px; border-radius: 999px; }
+  .container { flex: 1; max-width: 800px; width: 100%; margin: 0 auto;
+    padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem;
+    overflow-y: auto; }
+  .message { padding: 1rem; border-radius: 12px; max-width: 85%; line-height: 1.6; }
+  .message.user { background: var(--accent); align-self: flex-end; }
+  .message.bot { background: var(--surface); border: 1px solid var(--border);
+    align-self: flex-start; }
+  .message.bot .sources { margin-top: 0.75rem; padding-top: 0.75rem;
+    border-top: 1px solid var(--border); font-size: 0.85rem; }
+  .message.bot .sources a { color: var(--accent); text-decoration: none; }
+  .message.bot .sources a:hover { text-decoration: underline; }
+  .ticker-tag { display: inline-block; background: #1e3a5f; color: var(--accent);
+    font-size: 0.75rem; padding: 1px 6px; border-radius: 4px; font-weight: 600; }
+  .input-area { background: var(--surface); border-top: 1px solid var(--border);
+    padding: 1rem 1.5rem; }
+  .input-row { max-width: 800px; margin: 0 auto; display: flex; gap: 0.5rem; }
+  .input-row select { background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 0.5rem; font-size: 0.9rem; }
+  .input-row input { flex: 1; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem;
+    font-size: 1rem; outline: none; }
+  .input-row input:focus { border-color: var(--accent); }
+  .input-row button { background: var(--accent); color: white; border: none;
+    border-radius: 8px; padding: 0.75rem 1.25rem; font-size: 1rem; cursor: pointer;
+    font-weight: 500; }
+  .input-row button:hover { background: var(--accent-hover); }
+  .input-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .typing { opacity: 0.7; font-style: italic; }
+  .welcome { text-align: center; padding: 2rem; color: var(--muted); }
+  .welcome h2 { color: var(--text); margin-bottom: 0.5rem; }
+  .chips { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; margin-top: 1rem; }
+  .chip { background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+    padding: 0.4rem 1rem; font-size: 0.85rem; cursor: pointer; color: var(--text); }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>FinChat</h1>
+  <span class="badge">AI-Powered</span>
+  <span style="color:var(--muted);font-size:0.85rem;margin-left:auto;">
+    Financial News Assistant
+  </span>
+</header>
+
+<div class="container" id="messages">
+  <div class="welcome">
+    <h2>Welcome to FinChat</h2>
+    <p>Ask me anything about recent financial news.<br>
+    I cover AAPL, MSFT, AMZN, NFLX, NVDA, INTC, and IBM.</p>
+    <div class="chips">
+      <span class="chip" onclick="askQuestion('What is the latest news about Apple?')">Apple news</span>
+      <span class="chip" onclick="askQuestion('How is NVIDIA performing in the AI market?')">NVIDIA & AI</span>
+      <span class="chip" onclick="askQuestion('What are the latest developments at Amazon?')">Amazon updates</span>
+      <span class="chip" onclick="askQuestion('Tell me about Netflix subscriber growth')">Netflix growth</span>
+    </div>
+  </div>
+</div>
+
+<div class="input-area">
+  <div class="input-row">
+    <select id="ticker">
+      <option value="">All tickers</option>
+      <option value="AAPL">AAPL</option>
+      <option value="MSFT">MSFT</option>
+      <option value="AMZN">AMZN</option>
+      <option value="NFLX">NFLX</option>
+      <option value="NVDA">NVDA</option>
+      <option value="INTC">INTC</option>
+      <option value="IBM">IBM</option>
+    </select>
+    <input id="query" type="text" placeholder="Ask about financial news..."
+      onkeydown="if(event.key==='Enter')sendChat()" autofocus>
+    <button id="sendBtn" onclick="sendChat()">Send</button>
+  </div>
+</div>
+
+<script>
+const msgContainer = document.getElementById('messages');
+const queryInput = document.getElementById('query');
+const tickerSelect = document.getElementById('ticker');
+const sendBtn = document.getElementById('sendBtn');
+
+function addMessage(text, role, sources) {
+  const welcome = document.querySelector('.welcome');
+  if (welcome) welcome.remove();
+
+  const div = document.createElement('div');
+  div.className = `message ${role}`;
+
+  if (role === 'bot') {
+    let html = text.replace(/\n/g, '<br>');
+    if (sources && sources.length) {
+      html += '<div class="sources"><strong>Sources:</strong><br>';
+      sources.forEach(s => {
+        html += `<span class="ticker-tag">${s.ticker}</span> `;
+        html += `<a href="${s.link}" target="_blank">${s.title}</a><br>`;
+      });
+      html += '</div>';
+    }
+    div.innerHTML = html;
+  } else {
+    div.textContent = text;
+  }
+  msgContainer.appendChild(div);
+  msgContainer.scrollTop = msgContainer.scrollHeight;
+}
+
+function askQuestion(q) {
+  queryInput.value = q;
+  sendChat();
+}
+
+async function sendChat() {
+  const query = queryInput.value.trim();
+  if (!query) return;
+
+  const ticker = tickerSelect.value || null;
+  addMessage(query + (ticker ? ` [${ticker}]` : ''), 'user');
+  queryInput.value = '';
+  sendBtn.disabled = true;
+
+  const typing = document.createElement('div');
+  typing.className = 'message bot typing';
+  typing.textContent = 'Analyzing news articles...';
+  msgContainer.appendChild(typing);
+  msgContainer.scrollTop = msgContainer.scrollHeight;
+
+  try {
+    const resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, ticker }),
+    });
+    const data = await resp.json();
+    typing.remove();
+    if (resp.ok) {
+      addMessage(data.answer, 'bot', data.sources);
+    } else {
+      addMessage(`Error: ${data.detail || data.error || 'Something went wrong'}`, 'bot');
+    }
+  } catch (e) {
+    typing.remove();
+    addMessage(`Connection error: ${e.message}`, 'bot');
+  } finally {
+    sendBtn.disabled = false;
+    queryInput.focus();
+  }
+}
+</script>
+</body>
+</html>
