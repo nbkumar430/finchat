@@ -6,6 +6,8 @@ import sys
 import traceback
 from datetime import UTC, datetime
 
+from opentelemetry.trace import get_current_span
+
 
 class StructuredFormatter(logging.Formatter):
     """Emit each log record as a single JSON line (Cloud Logging compatible)."""
@@ -25,6 +27,12 @@ class StructuredFormatter(logging.Formatter):
             val = getattr(record, key, None)
             if val is not None:
                 log_entry[key] = val
+
+        span = get_current_span()
+        span_context = span.get_span_context() if span else None
+        if span_context and span_context.is_valid:
+            log_entry["trace_id"] = f"{span_context.trace_id:032x}"
+            log_entry["span_id"] = f"{span_context.span_id:016x}"
 
         if record.exc_info and record.exc_info[0] is not None:
             log_entry["exception"] = traceback.format_exception(*record.exc_info)

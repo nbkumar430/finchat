@@ -35,6 +35,7 @@ from app.schemas import (
     ErrorResponse,
     HealthResponse,
 )
+from app.tracing import setup_tracing
 from app.vertex_client import init_vertex, summarize_news
 
 logger = logging.getLogger(__name__)
@@ -124,6 +125,7 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
+setup_tracing(app)
 
 app.add_middleware(
     CORSMiddleware,

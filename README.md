@@ -32,4 +32,25 @@ Push to `main` triggers the CI/CD pipeline: lint → test → build → deploy t
 Required GitHub Secrets:
 - `WIF_PROVIDER`: Workload Identity Federation provider resource name
 - `WIF_SA_EMAIL`: Service account email for deployments
-- `GRAFANA_ADMIN_PASSWORD`: Grafana admin password
+- `BILLING_EXPORT_TABLE` (optional): BigQuery billing export table as `project.dataset.table`
+- `SENDGRID_API_KEY` (optional): for daily billing email delivery
+
+Runtime credentials are fetched from Secret Manager (not GitHub secrets):
+- `GEMINI_API_KEY`
+- `GRAFANA_ADMIN_PASSWORD`
+
+## Public URLs
+
+After deployment, fetch service URLs:
+
+```bash
+gcloud run services describe finchat-app --region us-central1 --format='value(status.url)'
+gcloud run services describe finchat-grafana --region us-central1 --format='value(status.url)'
+```
+
+- Chat app: `<APP_URL>/`
+- Swagger UI: `<APP_URL>/docs`
+- Grafana: `<GRAFANA_URL>/`
+
+The CI/CD workflow also publishes these links automatically in the GitHub Actions
+run summary after a successful deployment, along with smoke-test results.

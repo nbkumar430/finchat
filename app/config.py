@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     # Observability
     otel_service_name: str = "finchat"
     enable_tracing: bool = os.getenv("ENABLE_TRACING", "true").lower() == "true"
+    otlp_endpoint: str = os.getenv("OTLP_ENDPOINT", "")
 
     class Config:
         env_file = ".env"

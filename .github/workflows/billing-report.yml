@@ -1,8 +1,10 @@
 name: Daily Billing Report
 
-# 9 PM CST = 03:00 UTC (CST is UTC-6)
 on:
   schedule:
+    # Run at 02:00 and 03:00 UTC to cover DST/non-DST.
+    # Job logic below sends only when America/Chicago local hour is 21.
+    - cron: "0 2 * * *"
     - cron: "0 3 * * *"
   workflow_dispatch:  # Allow manual trigger for testing
 
@@ -20,6 +22,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Validate local time window (9 PM America/Chicago)
+        run: |
+          CHICAGO_HOUR=$(TZ=America/Chicago date +%H)
+          if [[ "$CHICAGO_HOUR" != "21" ]]; then
+            echo "Not 9 PM in America/Chicago (hour=$CHICAGO_HOUR). Skipping."
+            exit 0
+          fi
+          echo "In target time window."
 
       # ── Authenticate to GCP ────────────────────────────────────────
       - id: auth
@@ -46,7 +57,7 @@ jobs:
           echo "yesterday=$YESTERDAY"   >> "$GITHUB_OUTPUT"
           echo "month_start=$MONTH_START" >> "$GITHUB_OUTPUT"
 
-          # ── Month-to-date cost per service ───────────────────────
+          # ── Month-to-date inventory and optional cost query ──────
           echo "Fetching month-to-date costs ($MONTH_START → $TODAY)..."
           gcloud billing accounts list --format="value(name)" > /tmp/billing_accounts.txt
           BILLING_ACCOUNT=$(head -1 /tmp/billing_accounts.txt)
@@ -99,12 +110,48 @@ jobs:
           apis = json.loads(api_result.stdout) if api_result.stdout.strip() else []
           api_names = [a.get("config", {}).get("name", "") for a in apis]
 
+          # Optional: include real costs if billing export table is configured.
+          billing_export_table = os.environ.get("BILLING_EXPORT_TABLE", "").strip()
+          billed_cost_rows = []
+          if billing_export_table:
+              bq = subprocess.run(
+                  [
+                      "bq", "query", "--use_legacy_sql=false", "--format=json",
+                      f"""
+                      SELECT service.description AS service, ROUND(SUM(cost), 2) AS cost
+                      FROM `{billing_export_table}`
+                      WHERE project.id = '{project}'
+                        AND DATE(usage_start_time) BETWEEN DATE('{month_start}') AND DATE('{today}')
+                      GROUP BY service
+                      ORDER BY cost DESC
+                      """
+                  ],
+                  capture_output=True, text=True
+              )
+              if bq.returncode == 0 and bq.stdout.strip():
+                  billed_cost_rows = json.loads(bq.stdout)
+
           # ─── Write summary to file ───────────────────────────────
           with open("/tmp/billing_summary.txt", "w") as f:
               f.write(f"FinChat GCP Resource & Billing Summary\n")
               f.write(f"Project : {project}\n")
               f.write(f"Report  : {today} (month-to-date from {month_start})\n")
               f.write("=" * 60 + "\n\n")
+
+              f.write("MONTH-TO-DATE COST BREAKDOWN\n")
+              f.write("-" * 40 + "\n")
+              if billed_cost_rows:
+                  total = 0.0
+                  for row in billed_cost_rows:
+                      service = row.get("service", "unknown")
+                      cost = float(row.get("cost", 0.0))
+                      total += cost
+                      f.write(f"  {service:<30} ${cost:,.2f}\n")
+                  f.write(f"  {'TOTAL':<30} ${total:,.2f}\n")
+              else:
+                  f.write("  Billing export not configured or no rows found.\n")
+                  f.write("  Set BILLING_EXPORT_TABLE secret as: project.dataset.gcp_billing_export_v1_xxx\n")
+                  f.write("  for per-service cost breakdown.\n")
 
               f.write("CLOUD RUN SERVICES\n")
               f.write("-" * 40 + "\n")

@@ -9,11 +9,10 @@
 # What this script removes:
 #   1. Cloud Run services  (finchat-app, finchat-grafana)
 #   2. Artifact Registry repository  (finchat-repo)
-#   3. Secret Manager secret  (GEMINI_API_KEY)
-#   4. GCP API key  (e5dbaa75-c3e0-4f4a-9f1b-4fd1fd634ed6)
-#   5. IAM bindings granted to the deploy/runtime service accounts
-#   6. Service accounts  (finchat-app-sa, finchat-deploy-sa)
-#   7. Workload Identity Pool & Provider  (only if managed by this project)
+#   3. Secret Manager secrets  (GEMINI_API_KEY, GRAFANA_ADMIN_PASSWORD)
+#   4. IAM bindings granted to the deploy/runtime service accounts
+#   5. Service accounts  (finchat-app-sa, finchat-deploy-sa)
+#   6. Workload Identity Pool & Provider  (only if managed by this project)
 #
 # Prerequisites:
 #   - gcloud CLI authenticated with Owner or Editor role on the project
@@ -34,10 +33,7 @@ GRAFANA_SERVICE="finchat-grafana"
 AR_REPO="finchat-repo"
 
 # Secret Manager
-SECRET_NAME="GEMINI_API_KEY"
-
-# GCP API key UID (not the key string)
-API_KEY_UID="e5dbaa75-c3e0-4f4a-9f1b-4fd1fd634ed6"
+SECRETS=("GEMINI_API_KEY" "GRAFANA_ADMIN_PASSWORD")
 
 # Service accounts
 APP_SA="finchat-app-sa@${PROJECT_ID}.iam.gserviceaccount.com"
@@ -120,21 +116,16 @@ run gcloud artifacts repositories delete "${AR_REPO}" \
     --quiet
 
 # ─────────────────────────────────────────────────────────────────────────────
-section "3 / 7 – Delete Secret Manager secret"
+section "3 / 6 – Delete Secret Manager secrets"
 # ─────────────────────────────────────────────────────────────────────────────
-echo "  Deleting secret: ${SECRET_NAME}"
-run gcloud secrets delete "${SECRET_NAME}" \
-    --quiet
+for SECRET_NAME in "${SECRETS[@]}"; do
+  echo "  Deleting secret: ${SECRET_NAME}"
+  run gcloud secrets delete "${SECRET_NAME}" \
+      --quiet
+done
 
 # ─────────────────────────────────────────────────────────────────────────────
-section "4 / 7 – Delete GCP API key"
-# ─────────────────────────────────────────────────────────────────────────────
-echo "  Deleting API key UID: ${API_KEY_UID}"
-run gcloud services api-keys delete "${API_KEY_UID}" \
-    --quiet
-
-# ─────────────────────────────────────────────────────────────────────────────
-section "5 / 7 – Remove IAM role bindings"
+section "4 / 6 – Remove IAM role bindings"
 # ─────────────────────────────────────────────────────────────────────────────
 echo "  Removing roles from: ${APP_SA}"
 run gcloud projects remove-iam-policy-binding "${PROJECT_ID}" \
@@ -176,7 +167,7 @@ run gcloud projects remove-iam-policy-binding "${PROJECT_ID}" \
     --condition=None --quiet 2>/dev/null || true
 
 # ─────────────────────────────────────────────────────────────────────────────
-section "6 / 7 – Delete service accounts"
+section "5 / 6 – Delete service accounts"
 # ─────────────────────────────────────────────────────────────────────────────
 echo "  Deleting SA: ${APP_SA}"
 run gcloud iam service-accounts delete "${APP_SA}" \
@@ -187,7 +178,7 @@ run gcloud iam service-accounts delete "${DEPLOY_SA}" \
     --quiet
 
 # ─────────────────────────────────────────────────────────────────────────────
-section "7 / 7 – Delete Workload Identity Pool (GitHub Actions OIDC)"
+section "6 / 6 – Delete Workload Identity Pool (GitHub Actions OIDC)"
 # ─────────────────────────────────────────────────────────────────────────────
 echo "  Deleting WIF provider: ${WIF_PROVIDER} in pool: ${WIF_POOL}"
 run gcloud iam workload-identity-pools providers delete "${WIF_PROVIDER}" \
