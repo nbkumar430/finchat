@@ -1,6 +1,8 @@
 # AI summarization – failure scenarios & fixes
 
-FinChat uses the Google **GenAI** SDK. Summarization can run in two modes:
+FinChat uses the Google **GenAI** SDK when available. If the model call fails, answers are still produced from `stock_news.json` using an **extractive TF–IDF ranker** (k nearest sentences) — no extra dependencies, no hallucination outside the file.
+
+Summarization modes:
 
 | Mode | When | Auth |
 |------|------|------|

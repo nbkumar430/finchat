@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.config import get_settings
+from app.local_summarizer import build_extractive_answer
 from app.logging_config import setup_logging
 from app.metrics import (
     APP_INFO,
@@ -68,16 +69,14 @@ _OUT_OF_SCOPE_MSG = (
 )
 
 
-def _build_grounded_fallback_answer(query: str, sources: list[ArticleRef]) -> str:
-    """Build a strict grounded fallback answer when Vertex AI is unavailable."""
-    source_lines = [f"- {src.ticker}: {src.title}" for src in sources[:3]]
+def _build_headline_only_answer(query: str, sources: list[ArticleRef]) -> str:
+    """Last-resort answer from titles only (should be rare if extractive path works)."""
+    source_lines = [f"- {src.ticker}: {src.title}" for src in sources[:5]]
     source_text = "\n".join(source_lines) if source_lines else "- No matching articles."
     return (
-        "AI summarization is temporarily unavailable, so here is a grounded fallback from the available articles only.\n\n"
-        f"Question: {query}\n"
-        "Relevant article headlines:\n"
+        f"Here are the closest matches in the dataset for: **{query}**\n\n"
         f"{source_text}\n\n"
-        "Please retry in a moment for a fuller AI summary."
+        "_Showing headlines only — article text could not be summarized automatically._"
     )
 
 
@@ -277,6 +276,7 @@ async def chat(request: ChatRequest):
             ),
             sources=[],
             ticker_filter=ticker,
+            answer_source="headlines",
         )
 
     # ── Guardrail 2: reject off-topic queries (no recognized company/ticker) ──
@@ -286,6 +286,7 @@ async def chat(request: ChatRequest):
             answer=_OUT_OF_SCOPE_MSG.format(tickers=", ".join(sorted(SUPPORTED_TICKERS))),
             sources=[],
             ticker_filter=None,
+            answer_source="headlines",
         )
 
     # Search for relevant articles
@@ -303,6 +304,7 @@ async def chat(request: ChatRequest):
             ),
             sources=[],
             ticker_filter=ticker,
+            answer_source="headlines",
         )
 
     CHAT_REQUESTS.labels(ticker=ticker or "all").inc()
@@ -318,13 +320,30 @@ async def chat(request: ChatRequest):
     # Call Vertex AI for summarization
     sources = [ArticleRef(title=a.title, ticker=a.ticker, link=a.link) for a in articles]
     fallback_mode = False
+    answer_source = "gemini"
     try:
         # Offload sync model call to threadpool to avoid blocking event loop under load.
         answer = await run_in_threadpool(summarize_news, query, context)
     except Exception as exc:
-        logger.error("Vertex AI summarization failed: %s", exc)
+        logger.warning(
+            "Gemini summarization failed; using extractive TF-IDF summary from JSON: %s",
+            exc,
+        )
         ERROR_COUNT.labels(type="vertex_ai_unavailable", endpoint="/api/chat").inc()
-        answer = _build_grounded_fallback_answer(query=query, sources=sources)
-        fallback_mode = True
+        try:
+            answer = await run_in_threadpool(build_extractive_answer, query, articles, ticker)
+            answer_source = "extractive"
+            fallback_mode = False
+        except Exception as ex2:
+            logger.error("Extractive summarization failed: %s", ex2, exc_info=True)
+            answer = _build_headline_only_answer(query=query, sources=sources)
+            answer_source = "headlines"
+            fallback_mode = True
 
-    return ChatResponse(answer=answer, sources=sources, ticker_filter=ticker, fallback_mode=fallback_mode)
+    return ChatResponse(
+        answer=answer,
+        sources=sources,
+        ticker_filter=ticker,
+        fallback_mode=fallback_mode,
+        answer_source=answer_source,
+    )

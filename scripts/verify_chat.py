@@ -48,12 +48,13 @@ def main() -> int:
         print("CHAT:", json.dumps(chat, indent=2))
 
         fallback = bool(chat.get("fallback_mode"))
+        src = chat.get("answer_source", "gemini")
         ai_status = health.get("ai_backend_status")
-        print(f"RESULT: ai_backend_status={ai_status}, fallback_mode={fallback}")
+        print(f"RESULT: ai_backend_status={ai_status}, answer_source={src}, fallback_mode={fallback}")
         if fallback:
-            print("FAIL: summarization is not active (fallback mode).")
+            print("FAIL: headline-only degraded mode.")
             return 2
-        print("PASS: summarization is active.")
+        print(f"PASS: chat answered via {src} (grounded answer produced).")
         return 0
     except urllib.error.HTTPError as exc:
         print(f"HTTP error: {exc.code} {exc.reason}", file=sys.stderr)

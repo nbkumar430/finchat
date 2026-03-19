@@ -46,7 +46,11 @@ class ChatResponse(BaseModel):
     )
     fallback_mode: bool = Field(
         False,
-        description="True when response uses non-AI grounded fallback mode",
+        description="True when a degraded headline-only fallback is used (rare)",
+    )
+    answer_source: str = Field(
+        "gemini",
+        description="gemini | extractive | headlines — how the answer was produced",
     )
 
 

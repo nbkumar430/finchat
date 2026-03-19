@@ -62,16 +62,19 @@ def test_chat_success(mock_summarize, client):
     assert "answer" in data
     assert "sources" in data
     assert data["fallback_mode"] is False
+    assert data.get("answer_source") == "gemini"
 
 
 @patch("app.main.summarize_news", side_effect=Exception("API error"))
 def test_chat_vertex_failure(mock_summarize, client):
+    """When Gemini fails, extractive TF-IDF answer is returned (still grounded)."""
     resp = client.post("/api/chat", json={"query": "Tell me about Apple"})
     assert resp.status_code == 200
     body = resp.json()
-    assert "temporarily unavailable" in body["answer"].lower()
+    assert body["answer_source"] == "extractive"
+    assert body["fallback_mode"] is False
     assert len(body["sources"]) >= 1
-    assert body["fallback_mode"] is True
+    assert "bundled" in body["answer"].lower() or "tf" in body["answer"].lower()
 
 
 def test_root_returns_html(client):
