@@ -175,7 +175,12 @@ def get_vertex_backend_status() -> str:
         _health_cache_ts = now
         return _health_cache_status
     except Exception as exc:
-        logger.warning("Vertex backend health probe failed for model=%s backend=%s: %s", model, "vertexai" if settings.use_vertex_ai else "apikey", exc)
+        logger.warning(
+            "Vertex backend health probe failed for model=%s backend=%s: %s",
+            model,
+            "vertexai" if settings.use_vertex_ai else "apikey",
+            exc,
+        )
         _health_cache_status = "degraded"
         _health_cache_ts = now
         return _health_cache_status
