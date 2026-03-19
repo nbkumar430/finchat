@@ -11,7 +11,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -65,6 +65,19 @@ _OUT_OF_SCOPE_MSG = (
     "Apple (AAPL), Microsoft (MSFT), Amazon (AMZN), Netflix (NFLX), "
     "Nvidia (NVDA), Intel (INTC), or IBM."
 )
+
+
+def _build_grounded_fallback_answer(query: str, sources: list[ArticleRef]) -> str:
+    """Build a strict grounded fallback answer when Vertex AI is unavailable."""
+    source_lines = [f"- {src.ticker}: {src.title}" for src in sources[:3]]
+    source_text = "\n".join(source_lines) if source_lines else "- No matching articles."
+    return (
+        "AI summarization is temporarily unavailable, so here is a grounded fallback from the available articles only.\n\n"
+        f"Question: {query}\n"
+        "Relevant article headlines:\n"
+        f"{source_text}\n\n"
+        "Please retry in a moment for a fuller AI summary."
+    )
 
 
 def _query_is_in_scope(query: str) -> bool:
@@ -301,15 +314,12 @@ async def chat(request: ChatRequest):
     context = "\n---\n".join(context_parts)
 
     # Call Vertex AI for summarization
+    sources = [ArticleRef(title=a.title, ticker=a.ticker, link=a.link) for a in articles]
     try:
         answer = summarize_news(query, context)
     except Exception as exc:
         logger.error("Vertex AI summarization failed: %s", exc)
-        raise HTTPException(
-            status_code=503,
-            detail="AI summarization service is temporarily unavailable. Please try again.",
-        ) from exc
-
-    sources = [ArticleRef(title=a.title, ticker=a.ticker, link=a.link) for a in articles]
+        ERROR_COUNT.labels(type="vertex_ai_unavailable", endpoint="/api/chat").inc()
+        answer = _build_grounded_fallback_answer(query=query, sources=sources)
 
     return ChatResponse(answer=answer, sources=sources, ticker_filter=ticker)

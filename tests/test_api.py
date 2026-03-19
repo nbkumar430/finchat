@@ -65,7 +65,10 @@ def test_chat_success(mock_summarize, client):
 @patch("app.main.summarize_news", side_effect=Exception("API error"))
 def test_chat_vertex_failure(mock_summarize, client):
     resp = client.post("/api/chat", json={"query": "Tell me about Apple"})
-    assert resp.status_code == 503
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "temporarily unavailable" in body["answer"].lower()
+    assert len(body["sources"]) >= 1
 
 
 def test_root_returns_html(client):

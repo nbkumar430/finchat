@@ -51,7 +51,10 @@ def summarize_news(query: str, context: str) -> str:
         The model's response text.
     """
     if _client is None:
-        raise RuntimeError("Gemini AI not initialized. Call init_vertex() first.")
+        # Startup can fail if credentials are briefly unavailable; retry lazily.
+        init_vertex()
+    if _client is None:
+        raise RuntimeError("Gemini AI initialization failed.")
 
     settings = get_settings()
     prompt = f"""You are FinChat, a financial news assistant with STRICT operating boundaries.
@@ -96,6 +99,8 @@ Answer strictly and only from the articles above:"""
         elapsed = time.perf_counter() - start
         VERTEX_LATENCY.labels(model=settings.vertex_model).observe(elapsed)
         logger.info("Gemini AI response in %.2fs", elapsed, extra={"latency_ms": elapsed * 1000})
+        if not response.text:
+            raise RuntimeError("Gemini AI returned an empty response.")
         return response.text
     except Exception as exc:
         elapsed = time.perf_counter() - start
