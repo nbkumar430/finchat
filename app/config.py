@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     vertex_model: str = os.getenv("VERTEX_MODEL", "gemini-3.1-flash-lite-preview")
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     use_vertex_ai: bool = os.getenv("USE_VERTEX_AI", "true").lower() == "true"
+    vertex_fallback_models: str = os.getenv("VERTEX_FALLBACK_MODELS", "gemini-2.0-flash,gemini-1.5-flash")
     vertex_max_retries: int = int(os.getenv("VERTEX_MAX_RETRIES", "3"))
     vertex_retry_base_seconds: float = float(os.getenv("VERTEX_RETRY_BASE_SECONDS", "0.8"))
     vertex_max_in_flight: int = int(os.getenv("VERTEX_MAX_IN_FLIGHT", "8"))
