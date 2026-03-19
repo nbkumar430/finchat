@@ -386,9 +386,7 @@ async def chat(
     sources = [ArticleRef(title=a.title, ticker=a.ticker, link=a.link) for a in articles]
     fallback_mode = False
     chat_settings = get_settings()
-    answer_source = (
-        "openrouter" if chat_settings.summarization_provider == "openrouter" else "gemini"
-    )
+    answer_source = "openrouter" if chat_settings.summarization_provider == "openrouter" else "gemini"
     try:
         # Offload sync model call to threadpool to avoid blocking event loop under load.
         answer = await run_in_threadpool(summarize_news, query, context)
