@@ -116,7 +116,8 @@ jobs:
             --cpu 1 \
             --min-instances 0 \
             --max-instances 5 \
-            --set-env-vars "GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},LOG_LEVEL=INFO"
+            --set-env-vars "GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},LOG_LEVEL=INFO" \
+            --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest"
 
       # Deploy Grafana to Cloud Run
       - name: Deploy Grafana to Cloud Run

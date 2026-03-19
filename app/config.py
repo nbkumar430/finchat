@@ -12,7 +12,8 @@ class Settings(BaseSettings):
     # GCP
     gcp_project_id: str = os.getenv("GCP_PROJECT_ID", "project-ede0958a-eb5c-4225-94d")
     gcp_region: str = os.getenv("GCP_REGION", "us-central1")
-    vertex_model: str = os.getenv("VERTEX_MODEL", "gemini-2.0-flash-001")
+    vertex_model: str = os.getenv("VERTEX_MODEL", "gemini-2.0-flash")
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
 
     # App
     app_name: str = "FinChat"
