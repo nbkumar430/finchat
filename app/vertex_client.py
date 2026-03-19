@@ -12,7 +12,7 @@ from typing import Optional
 from google import genai
 from google.genai import types
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.metrics import VERTEX_ERRORS, VERTEX_LATENCY
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,9 @@ _concurrency_sem: Optional[threading.BoundedSemaphore] = None  # noqa: UP007 (py
 _failure_streak = 0
 _circuit_open_until = 0.0
 _active_model: Optional[str] = None  # noqa: UP007 (py3.9 compat)
+_active_backend: str = "vertexai"  # "vertexai" | "apikey"
+_api_key_client: Optional[genai.Client] = None  # noqa: UP007 (py3.9 compat)
+_api_key_lock = threading.Lock()
 
 
 def init_vertex() -> None:
@@ -95,6 +98,113 @@ def _set_active_model(model: str) -> None:
     _active_model = model
 
 
+def _set_active_backend(backend: str) -> None:
+    global _active_backend
+    _active_backend = backend
+
+
+def _get_api_key_client() -> genai.Client:
+    """Lazy client for Gemini Developer API (AI Studio key)."""
+    global _api_key_client
+    settings = get_settings()
+    if not settings.gemini_api_key:
+        raise RuntimeError("GEMINI_API_KEY is not set; cannot use API key fallback.")
+    with _api_key_lock:
+        if _api_key_client is None:
+            _api_key_client = genai.Client(api_key=settings.gemini_api_key)
+        return _api_key_client
+
+
+def _api_key_model_candidates() -> list[str]:
+    settings = get_settings()
+    parts = [m.strip() for m in settings.gemini_api_fallback_models.split(",") if m.strip()]
+    # Prefer configured primary first if not already in list
+    primary = settings.vertex_model.strip()
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in [primary, *parts]:
+        if m and m not in seen:
+            seen.add(m)
+            out.append(m)
+    return out
+
+
+def _is_not_found_error(exc: Exception) -> bool:
+    t = str(exc).upper()
+    return "404" in t and "NOT_FOUND" in t
+
+
+def _generate_summary_with_client(
+    client: genai.Client,
+    model_candidates: list[str],
+    prompt: str,
+    query: str,
+    context: str,
+    settings: Settings,
+    start: float,
+    backend_label: str,
+) -> str:
+    """Try model IDs in order; return first successful summary text."""
+    last_exc: Optional[Exception] = None  # noqa: UP007 (py3.9 compat)
+    for candidate in model_candidates:
+        for attempt in range(settings.vertex_max_retries):
+            try:
+                response = client.models.generate_content(
+                    model=candidate,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.3,
+                        max_output_tokens=768,
+                        top_p=0.8,
+                    ),
+                )
+                if not response.text:
+                    raise RuntimeError("Gemini AI returned an empty response.")
+                elapsed = time.perf_counter() - start
+                VERTEX_LATENCY.labels(model=candidate).observe(elapsed)
+                logger.info(
+                    "Gemini AI response backend=%s model=%s in %.2fs",
+                    backend_label,
+                    candidate,
+                    elapsed,
+                    extra={"latency_ms": elapsed * 1000},
+                )
+                _health_cache_status = "up"
+                _health_cache_ts = time.time()
+                _record_success()
+                _set_active_model(candidate)
+                _set_active_backend(backend_label)
+                _cache_put(
+                    _cache_key(query=query, context=context, model=f"{backend_label}:{candidate}"), response.text
+                )
+                return response.text
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if _is_not_found_error(exc):
+                    logger.warning(
+                        "Model unavailable (%s): %s; trying next.",
+                        backend_label,
+                        candidate,
+                    )
+                    break
+                if not _is_transient_error(exc) or attempt >= settings.vertex_max_retries - 1:
+                    raise
+                backoff = settings.vertex_retry_base_seconds * (2**attempt)
+                logger.warning(
+                    "Transient AI failure backend=%s model=%s attempt=%d/%d backoff=%.2fs error=%s",
+                    backend_label,
+                    candidate,
+                    attempt + 1,
+                    settings.vertex_max_retries,
+                    backoff,
+                    exc,
+                )
+                time.sleep(backoff)
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Gemini AI failed without explicit exception.")
+
+
 def _cache_get(key: str) -> Optional[str]:  # noqa: UP007 (py3.9 compat)
     settings = get_settings()
     now = time.time()
@@ -148,6 +258,7 @@ def _record_failure() -> None:
 def get_vertex_backend_status() -> str:
     """Return backend status based on a lightweight cached model probe."""
     global _client, _health_cache_status, _health_cache_ts
+    settings = get_settings()
     now = time.time()
     if now - _health_cache_ts < _HEALTH_TTL_SECONDS:
         return _health_cache_status
@@ -160,9 +271,10 @@ def get_vertex_backend_status() -> str:
             _health_cache_ts = now
             return _health_cache_status
 
-        settings = get_settings()
         last_exc: Optional[Exception] = None  # noqa: UP007 (py3.9 compat)
-        for candidate in _model_candidates():
+        probe_models = _model_candidates() if settings.use_vertex_ai else _api_key_model_candidates()
+        probe_backend = "vertexai" if settings.use_vertex_ai else "apikey"
+        for candidate in probe_models:
             try:
                 _client.models.generate_content(
                     model=candidate,
@@ -174,24 +286,55 @@ def get_vertex_backend_status() -> str:
                     ),
                 )
                 _set_active_model(candidate)
+                _set_active_backend(probe_backend)
                 _health_cache_status = "up"
                 _health_cache_ts = now
                 return _health_cache_status
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
-                is_not_found = "404" in str(exc).upper() and "NOT_FOUND" in str(exc).upper()
-                if is_not_found:
-                    logger.warning("Health probe model unavailable: %s; trying next fallback model.", candidate)
+                if _is_not_found_error(exc):
+                    logger.warning(
+                        "Health probe model unavailable (%s): %s",
+                        probe_backend,
+                        candidate,
+                    )
                     continue
                 raise
         if last_exc:
             raise last_exc
         raise RuntimeError("No healthy model candidate available.")
     except Exception as exc:
+        # If Vertex probes failed but API key is configured, try Developer API once per cache window.
+        if settings.use_vertex_ai and settings.vertex_fallback_to_api_key and settings.gemini_api_key:
+            try:
+                api = _get_api_key_client()
+                for cand in _api_key_model_candidates():
+                    try:
+                        api.models.generate_content(
+                            model=cand,
+                            contents="Reply with OK only.",
+                            config=types.GenerateContentConfig(
+                                temperature=0.0,
+                                max_output_tokens=8,
+                                top_p=0.1,
+                            ),
+                        )
+                        _set_active_model(cand)
+                        _set_active_backend("apikey")
+                        _health_cache_status = "up"
+                        _health_cache_ts = now
+                        return _health_cache_status
+                    except Exception as api_exc:  # noqa: BLE001
+                        if _is_not_found_error(api_exc):
+                            logger.warning("Health probe API model unavailable: %s", cand)
+                            continue
+                        raise
+            except Exception as api_probe_exc:  # noqa: BLE001
+                logger.warning("API key health probe failed: %s", api_probe_exc)
         logger.warning(
-            "Vertex backend health probe failed for model=%s backend=%s: %s",
+            "AI backend health probe failed for model=%s backend=%s: %s",
             _current_model(),
-            "vertexai" if settings.use_vertex_ai else "apikey",
+            _active_backend,
             exc,
         )
         _health_cache_status = "degraded"
@@ -225,7 +368,7 @@ def summarize_news(query: str, context: str) -> str:
     # Bound prompt size to reduce token pressure during spikes.
     context = context[:7000]
     model = _current_model()
-    cache_key = _cache_key(query=query, context=context, model=model)
+    cache_key = _cache_key(query=query, context=context, model=f"{_active_backend}:{model}")
     cached_answer = _cache_get(cache_key)
     if cached_answer is not None:
         logger.info("Gemini cache hit for model=%s", model)
@@ -267,52 +410,46 @@ Answer strictly and only from the articles above:"""
     if not acquired:
         raise RuntimeError("AI backend busy; too many concurrent requests.")
     try:
-        last_exc: Optional[Exception] = None  # noqa: UP007 (py3.9 compat)
-        candidate_models = _model_candidates()
-        last_exc: Optional[Exception] = None  # noqa: UP007 (py3.9 compat)
-        for candidate in candidate_models:
-            for attempt in range(settings.vertex_max_retries):
-                try:
-                    response = _client.models.generate_content(
-                        model=candidate,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            temperature=0.3,
-                            max_output_tokens=768,
-                            top_p=0.8,
-                        ),
-                    )
-                    if not response.text:
-                        raise RuntimeError("Gemini AI returned an empty response.")
-                    elapsed = time.perf_counter() - start
-                    VERTEX_LATENCY.labels(model=candidate).observe(elapsed)
-                    logger.info("Gemini AI response in %.2fs", elapsed, extra={"latency_ms": elapsed * 1000})
-                    _health_cache_status = "up"
-                    _health_cache_ts = time.time()
-                    _record_success()
-                    _set_active_model(candidate)
-                    _cache_put(_cache_key(query=query, context=context, model=candidate), response.text)
-                    return response.text
-                except Exception as exc:  # noqa: BLE001
-                    last_exc = exc
-                    is_not_found = "404" in str(exc).upper() and "NOT_FOUND" in str(exc).upper()
-                    if is_not_found:
-                        logger.warning("Model unavailable in project: %s; trying next fallback model.", candidate)
-                        break
-                    if not _is_transient_error(exc) or attempt >= settings.vertex_max_retries - 1:
-                        raise
-                    backoff = settings.vertex_retry_base_seconds * (2**attempt)
+        vertex_failed: Optional[Exception] = None  # noqa: UP007 (py3.9 compat)
+        if settings.use_vertex_ai:
+            try:
+                return _generate_summary_with_client(
+                    _client,
+                    _model_candidates(),
+                    prompt,
+                    query,
+                    context,
+                    settings,
+                    start,
+                    "vertexai",
+                )
+            except Exception as v_exc:  # noqa: BLE001
+                vertex_failed = v_exc
+                if settings.vertex_fallback_to_api_key and settings.gemini_api_key:
                     logger.warning(
-                        "Transient AI failure model=%s attempt=%d/%d backoff=%.2fs error=%s",
-                        candidate,
-                        attempt + 1,
-                        settings.vertex_max_retries,
-                        backoff,
-                        exc,
+                        "Vertex summarization failed (%s); attempting Gemini API key fallback.",
+                        v_exc,
                     )
-                    time.sleep(backoff)
-        if last_exc:
-            raise last_exc
+                else:
+                    raise
+
+        if settings.gemini_api_key and (
+            not settings.use_vertex_ai or (settings.vertex_fallback_to_api_key and vertex_failed is not None)
+        ):
+            api_client = _get_api_key_client() if settings.use_vertex_ai else _client
+            return _generate_summary_with_client(
+                api_client,
+                _api_key_model_candidates(),
+                prompt,
+                query,
+                context,
+                settings,
+                start,
+                "apikey",
+            )
+
+        if vertex_failed:
+            raise vertex_failed
         elapsed = time.perf_counter() - start
         VERTEX_LATENCY.labels(model=model).observe(elapsed)
         raise RuntimeError("Gemini AI failed without explicit exception.")
@@ -324,7 +461,7 @@ Answer strictly and only from the articles above:"""
         logger.error(
             "Gemini AI call failed for model=%s backend=%s: %s",
             _current_model(),
-            "vertexai" if settings.use_vertex_ai else "apikey",
+            _active_backend,
             exc,
             exc_info=True,
         )

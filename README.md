@@ -1,6 +1,6 @@
 # FinChat – Financial News Chat Application
 
-AI-powered chat application for querying recent financial news using Vertex AI (Gemini 2.0 Flash).
+AI-powered chat application for querying recent financial news using Vertex AI (Gemini), with Gemini API fallback when configured.
 
 ## Features
 
@@ -24,6 +24,8 @@ Visit http://localhost:8080 for the chat UI, http://localhost:8080/docs for Swag
 ## Architecture
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for full details on design, alerting, and trade-offs.
+
+**AI summarization troubleshooting:** [docs/AI_SUMMARIZATION.md](docs/AI_SUMMARIZATION.md) (Vertex vs API key, local testing, common errors).
 
 ## Deployment
 

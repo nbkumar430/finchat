@@ -1,0 +1,73 @@
+# AI summarization – failure scenarios & fixes
+
+FinChat uses the Google **GenAI** SDK. Summarization can run in two modes:
+
+| Mode | When | Auth |
+|------|------|------|
+| **Vertex AI** | `USE_VERTEX_AI=true` (default on Cloud Run) | Cloud Run service account (`roles/aiplatform.user`) |
+| **Gemini API (AI Studio)** | `USE_VERTEX_AI=false` **or** automatic fallback | `GEMINI_API_KEY` |
+
+## Why summarization can fail (checklist)
+
+1. **Vertex: model not available in project/region** (`404 NOT_FOUND`, “Publisher Model … was not found”)  
+   - The model ID must exist in **Vertex AI → Model Garden** for your project and region.  
+   - Preview models may require allowlisting.  
+   - **Fix:** In GCP console, enable/use a listed Gemini model; set `VERTEX_MODEL` to that exact ID.  
+   - **App fix:** With `VERTEX_FALLBACK_TO_API_KEY=true` (default) and `GEMINI_API_KEY` set, the app automatically tries the **Gemini API** after Vertex models fail.
+
+2. **Gemini API: quota / billing** (`429 RESOURCE_EXHAUSTED`, free tier limit 0)  
+   - **Fix:** Enable billing or upgrade quota on the Google AI / Gemini API project tied to the key.
+
+3. **Wrong or deprecated model ID**  
+   - Vertex expects IDs like `gemini-2.0-flash-001` depending on release; AI Studio may accept `gemini-2.0-flash`.  
+   - **Fix:** Tune `VERTEX_MODEL`, `VERTEX_FALLBACK_MODELS`, and `GEMINI_API_FALLBACK_MODELS`.
+
+4. **Missing credentials**  
+   - Vertex: runtime SA without `roles/aiplatform.user` or wrong `GCP_PROJECT_ID` / `GCP_REGION`.  
+   - API: missing or invalid `GEMINI_API_KEY`.
+
+5. **Circuit breaker / overload** (app-side)  
+   - After repeated failures the circuit opens briefly; concurrent calls are capped.  
+   - **Fix:** Wait for cooldown; reduce traffic; fix root cause (quota or model access).
+
+6. **Empty model response**  
+   - Treated as error; user sees grounded fallback.
+
+## Local testing (real summarization)
+
+**Option A – Gemini API only (simplest for laptops):**
+
+```bash
+cd /path/to/finchat
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+export USE_VERTEX_AI=false
+export GEMINI_API_KEY="your-key"   # AI Studio
+set PYTHONPATH=.   # if needed
+python scripts/test_local_summarization.py
+# Or run the API:
+uvicorn app.main:app --host 127.0.0.1 --port 8080
+curl -s -X POST http://127.0.0.1:8080/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"What is the latest Apple news?","ticker":"AAPL"}'
+```
+
+**Option B – Vertex AI (requires `gcloud auth application-default login` and project access):**
+
+```bash
+export USE_VERTEX_AI=true
+export GCP_PROJECT_ID=your-project-id
+export GCP_REGION=us-central1
+export VERTEX_MODEL=gemini-2.0-flash   # use an ID your project actually has
+python scripts/test_local_summarization.py
+```
+
+## Production (Cloud Run)
+
+Recommended env (in addition to secrets):
+
+- `USE_VERTEX_AI=true`
+- `VERTEX_FALLBACK_TO_API_KEY=true` (default) so a valid `GEMINI_API_KEY` covers Vertex model gaps.
+- `GEMINI_API_KEY` from Secret Manager (already in CI/CD).
+
+If every Vertex candidate returns `404`, logs will show **“attempting Gemini API key fallback”**; if the key then hits `429`, fix billing/quota on the API side.

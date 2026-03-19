@@ -119,7 +119,7 @@ jobs:
             --min-instances 0 \
             --max-instances 5 \
             --service-account ${{ env.APP_RUNTIME_SA }} \
-            --set-env-vars "GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},LOG_LEVEL=INFO" \
+            --set-env-vars "GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},LOG_LEVEL=INFO,USE_VERTEX_AI=true,VERTEX_FALLBACK_TO_API_KEY=true" \
             --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest"
           APP_URL=$(gcloud run services describe ${{ env.APP_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')
           echo "app_url=${APP_URL}" >> "$GITHUB_OUTPUT"

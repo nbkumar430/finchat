@@ -4,7 +4,8 @@
 
 FinChat is an AI-powered financial news chat application. Users submit natural-language
 questions about recent stock news, and the system returns grounded, summarized responses
-using Google Vertex AI (Gemini 2.0 Flash).
+using Google Vertex AI (Gemini) with optional **Gemini API (AI Studio) fallback**
+when Vertex model IDs are unavailable or quotas differ. See [docs/AI_SUMMARIZATION.md](docs/AI_SUMMARIZATION.md).
 
 ---
 

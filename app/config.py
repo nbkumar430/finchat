@@ -12,9 +12,16 @@ class Settings(BaseSettings):
     # GCP
     gcp_project_id: str = os.getenv("GCP_PROJECT_ID", "project-ede0958a-eb5c-4225-94d")
     gcp_region: str = os.getenv("GCP_REGION", "us-central1")
-    vertex_model: str = os.getenv("VERTEX_MODEL", "gemini-3.1-flash-lite-preview")
+    # Default to a widely available Vertex ID; override with VERTEX_MODEL when your project has a specific catalog entry.
+    vertex_model: str = os.getenv("VERTEX_MODEL", "gemini-2.0-flash")
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     use_vertex_ai: bool = os.getenv("USE_VERTEX_AI", "true").lower() == "true"
+    # After all Vertex model IDs fail (e.g. 404), retry using Gemini Developer API if GEMINI_API_KEY is set.
+    vertex_fallback_to_api_key: bool = os.getenv("VERTEX_FALLBACK_TO_API_KEY", "true").lower() == "true"
+    gemini_api_fallback_models: str = os.getenv(
+        "GEMINI_API_FALLBACK_MODELS",
+        "gemini-2.0-flash,gemini-2.0-flash-lite,gemini-1.5-flash",
+    )
     vertex_fallback_models: str = os.getenv(
         "VERTEX_FALLBACK_MODELS",
         "gemini-2.0-flash-001,gemini-2.0-flash,gemini-2.0-flash-lite-001,gemini-1.5-flash-002,gemini-1.5-flash",
