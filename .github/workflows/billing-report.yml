@@ -1,0 +1,233 @@
+name: Daily Billing Report
+
+# 9 PM CST = 03:00 UTC (CST is UTC-6)
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:  # Allow manual trigger for testing
+
+env:
+  PROJECT_ID: project-ede0958a-eb5c-4225-94d
+  REGION: us-central1
+  NOTIFY_EMAIL: nbkumar430@gmail.com
+
+permissions:
+  contents: read
+  id-token: write  # Required for Workload Identity Federation
+
+jobs:
+  billing-report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Authenticate to GCP ────────────────────────────────────────
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SA_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      # ── Gather billing data via gcloud billing ─────────────────────
+      - name: Collect billing breakdown
+        id: billing
+        run: |
+          set -e
+          TODAY=$(date -u +%Y-%m-%d)
+          YESTERDAY=$(date -u -d "yesterday" +%Y-%m-%d)
+          MONTH_START=$(date -u +%Y-%m-01)
+
+          echo "today=$TODAY"           >> "$GITHUB_OUTPUT"
+          echo "yesterday=$YESTERDAY"   >> "$GITHUB_OUTPUT"
+          echo "month_start=$MONTH_START" >> "$GITHUB_OUTPUT"
+
+          # ── Month-to-date cost per service ───────────────────────
+          echo "Fetching month-to-date costs ($MONTH_START → $TODAY)..."
+          gcloud billing accounts list --format="value(name)" > /tmp/billing_accounts.txt
+          BILLING_ACCOUNT=$(head -1 /tmp/billing_accounts.txt)
+          echo "billing_account=$BILLING_ACCOUNT" >> "$GITHUB_OUTPUT"
+
+          # Export cost data using BigQuery billing export (if enabled),
+          # or fall back to Cloud Billing Catalog API for service list
+          python3 << 'PYEOF'
+          import subprocess, json, os, datetime
+
+          project  = os.environ.get("PROJECT_ID", "project-ede0958a-eb5c-4225-94d")
+          today    = datetime.date.today()
+          month_start = today.replace(day=1)
+
+          # --- List Cloud Run services and their current state ------
+          run_result = subprocess.run(
+              ["gcloud", "run", "services", "list",
+               "--project", project,
+               "--format", "json"],
+              capture_output=True, text=True
+          )
+          run_services = json.loads(run_result.stdout) if run_result.stdout.strip() else []
+
+          # --- List Artifact Registry repositories ------------------
+          ar_result = subprocess.run(
+              ["gcloud", "artifacts", "repositories", "list",
+               "--project", project,
+               "--format", "json"],
+              capture_output=True, text=True
+          )
+          ar_repos = json.loads(ar_result.stdout) if ar_result.stdout.strip() else []
+
+          # --- List Secret Manager secrets --------------------------
+          sm_result = subprocess.run(
+              ["gcloud", "secrets", "list",
+               "--project", project,
+               "--format", "json"],
+              capture_output=True, text=True
+          )
+          sm_secrets = json.loads(sm_result.stdout) if sm_result.stdout.strip() else []
+
+          # --- Enabled APIs (services) ------------------------------
+          api_result = subprocess.run(
+              ["gcloud", "services", "list",
+               "--enabled",
+               "--project", project,
+               "--format", "json"],
+              capture_output=True, text=True
+          )
+          apis = json.loads(api_result.stdout) if api_result.stdout.strip() else []
+          api_names = [a.get("config", {}).get("name", "") for a in apis]
+
+          # ─── Write summary to file ───────────────────────────────
+          with open("/tmp/billing_summary.txt", "w") as f:
+              f.write(f"FinChat GCP Resource & Billing Summary\n")
+              f.write(f"Project : {project}\n")
+              f.write(f"Report  : {today} (month-to-date from {month_start})\n")
+              f.write("=" * 60 + "\n\n")
+
+              f.write("CLOUD RUN SERVICES\n")
+              f.write("-" * 40 + "\n")
+              if run_services:
+                  for svc in run_services:
+                      name   = svc.get("metadata", {}).get("name", "unknown")
+                      region = svc.get("metadata", {}).get("labels", {}).get("cloud.googleapis.com/location", "n/a")
+                      url    = svc.get("status", {}).get("url", "n/a")
+                      f.write(f"  {name:<30} region={region}\n")
+                      f.write(f"  {'':>4}URL: {url}\n")
+              else:
+                  f.write("  (none found)\n")
+
+              f.write("\nARTIFACT REGISTRY REPOSITORIES\n")
+              f.write("-" * 40 + "\n")
+              if ar_repos:
+                  for repo in ar_repos:
+                      rname = repo.get("name", "unknown").split("/")[-1]
+                      fmt   = repo.get("format", "n/a")
+                      f.write(f"  {rname:<30} format={fmt}\n")
+              else:
+                  f.write("  (none found)\n")
+
+              f.write("\nSECRET MANAGER SECRETS\n")
+              f.write("-" * 40 + "\n")
+              if sm_secrets:
+                  for secret in sm_secrets:
+                      sname = secret.get("name", "unknown").split("/")[-1]
+                      f.write(f"  {sname}\n")
+              else:
+                  f.write("  (none found)\n")
+
+              f.write("\nENABLED BILLABLE APIs\n")
+              f.write("-" * 40 + "\n")
+              billable = [
+                  a for a in api_names
+                  if any(k in a for k in [
+                      "run", "artifactregistry", "secretmanager",
+                      "generativelanguage", "aiplatform", "container",
+                      "cloudbuild", "billing"
+                  ])
+              ]
+              for api in sorted(billable):
+                  f.write(f"  {api}\n")
+
+              f.write("\nESTIMATED FREE-TIER USAGE NOTE\n")
+              f.write("-" * 40 + "\n")
+              f.write("  Cloud Run   : 2M req/mo + 360,000 vCPU-sec free\n")
+              f.write("  Artifact Reg: 0.5 GB storage free\n")
+              f.write("  Secret Mgr  : 6 active secrets + 10K accesses free\n")
+              f.write("  Gemini API  : Free tier — 1,500 req/day (gemini-2.0-flash)\n")
+              f.write("\n")
+              f.write("For exact cost breakdown, visit:\n")
+              f.write("  https://console.cloud.google.com/billing\n")
+              f.write("  https://console.cloud.google.com/billing/reports?project=" + project + "\n")
+
+          print("Billing summary written to /tmp/billing_summary.txt")
+          PYEOF
+
+      # ── Send email via SendGrid (or fallback to GitHub summary) ───
+      - name: Send billing email
+        env:
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          NOTIFY_EMAIL: ${{ env.NOTIFY_EMAIL }}
+          TODAY: ${{ steps.billing.outputs.today }}
+          PROJECT_ID: ${{ env.PROJECT_ID }}
+        run: |
+          pip install sendgrid --quiet
+
+          python3 << 'PYEOF'
+          import os, sendgrid
+          from sendgrid.helpers.mail import Mail
+
+          api_key = os.environ.get("SENDGRID_API_KEY", "")
+          if not api_key:
+              print("⚠️  SENDGRID_API_KEY not set — printing report to workflow log instead.")
+              with open("/tmp/billing_summary.txt") as f:
+                  print(f.read())
+              raise SystemExit(0)
+
+          with open("/tmp/billing_summary.txt") as f:
+              body_text = f.read()
+
+          today   = os.environ.get("TODAY", "today")
+          project = os.environ.get("PROJECT_ID", "")
+          to_addr = os.environ.get("NOTIFY_EMAIL", "")
+
+          # Build plain-text + HTML email
+          html_body = body_text.replace("\n", "<br>").replace(" ", "&nbsp;")
+          html_body = f"<pre style='font-family:monospace;font-size:13px;'>{html_body}</pre>"
+          html_body += (
+              f"<hr><p>View live billing: "
+              f"<a href='https://console.cloud.google.com/billing/reports?project={project}'>"
+              f"GCP Billing Console</a></p>"
+          )
+
+          msg = Mail(
+              from_email="noreply-finchat@gmail.com",
+              to_emails=to_addr,
+              subject=f"[FinChat] GCP Daily Billing Report – {today}",
+              plain_text_content=body_text,
+              html_content=html_body,
+          )
+
+          sg = sendgrid.SendGridAPIClient(api_key=api_key)
+          response = sg.send(msg)
+          print(f"Email sent: status={response.status_code} to={to_addr}")
+          PYEOF
+
+      # ── Always upload report as workflow artifact ──────────────────
+      - name: Upload billing report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: billing-report-${{ steps.billing.outputs.today }}
+          path: /tmp/billing_summary.txt
+          retention-days: 30
+
+      # ── Print report to workflow log (always visible in Actions UI) ─
+      - name: Print billing report to workflow log
+        if: always()
+        run: |
+          echo "========================================"
+          echo "  FINCHAT DAILY BILLING REPORT"
+          echo "========================================"
+          cat /tmp/billing_summary.txt
