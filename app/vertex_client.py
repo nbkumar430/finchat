@@ -161,23 +161,36 @@ def get_vertex_backend_status() -> str:
             return _health_cache_status
 
         settings = get_settings()
-        model = _current_model()
-        _client.models.generate_content(
-            model=model,
-            contents="Reply with OK only.",
-            config=types.GenerateContentConfig(
-                temperature=0.0,
-                max_output_tokens=8,
-                top_p=0.1,
-            ),
-        )
-        _health_cache_status = "up"
-        _health_cache_ts = now
-        return _health_cache_status
+        last_exc: Optional[Exception] = None  # noqa: UP007 (py3.9 compat)
+        for candidate in _model_candidates():
+            try:
+                _client.models.generate_content(
+                    model=candidate,
+                    contents="Reply with OK only.",
+                    config=types.GenerateContentConfig(
+                        temperature=0.0,
+                        max_output_tokens=8,
+                        top_p=0.1,
+                    ),
+                )
+                _set_active_model(candidate)
+                _health_cache_status = "up"
+                _health_cache_ts = now
+                return _health_cache_status
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                is_not_found = "404" in str(exc).upper() and "NOT_FOUND" in str(exc).upper()
+                if is_not_found:
+                    logger.warning("Health probe model unavailable: %s; trying next fallback model.", candidate)
+                    continue
+                raise
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("No healthy model candidate available.")
     except Exception as exc:
         logger.warning(
             "Vertex backend health probe failed for model=%s backend=%s: %s",
-            model,
+            _current_model(),
             "vertexai" if settings.use_vertex_ai else "apikey",
             exc,
         )
