@@ -33,6 +33,17 @@ FinChat uses the Google **GenAI** SDK. Summarization can run in two modes:
 6. **Empty model response**  
    - Treated as error; user sees grounded fallback.
 
+## One-shot: create Gemini API key and upload to Secret Manager
+
+From the repo root (authenticated `gcloud` with permissions to create API keys and Secret Manager versions):
+
+```bash
+export PROJECT_ID=your-gcp-project-id   # optional; defaults in script for this demo project
+bash scripts/create-gemini-api-key-and-secret.sh
+```
+
+Optional: `DRY_RUN=1 bash scripts/create-gemini-api-key-and-secret.sh` to preview steps only.
+
 ## Local testing (real summarization)
 
 **Option A – Gemini API only (simplest for laptops):**
