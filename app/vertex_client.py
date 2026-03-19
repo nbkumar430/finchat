@@ -14,6 +14,9 @@ from app.metrics import VERTEX_ERRORS, VERTEX_LATENCY
 logger = logging.getLogger(__name__)
 
 _client: genai.Client | None = None
+_health_cache_status: str = "degraded"
+_health_cache_ts: float = 0.0
+_HEALTH_TTL_SECONDS = 60.0
 
 
 def init_vertex() -> None:
@@ -41,15 +44,38 @@ def init_vertex() -> None:
 
 
 def get_vertex_backend_status() -> str:
-    """Return lightweight backend status for health endpoint."""
-    global _client
+    """Return backend status based on a lightweight cached model probe."""
+    global _client, _health_cache_status, _health_cache_ts
+    now = time.time()
+    if now - _health_cache_ts < _HEALTH_TTL_SECONDS:
+        return _health_cache_status
+
     try:
         if _client is None:
             init_vertex()
-        return "up" if _client is not None else "degraded"
+        if _client is None:
+            _health_cache_status = "degraded"
+            _health_cache_ts = now
+            return _health_cache_status
+
+        settings = get_settings()
+        _client.models.generate_content(
+            model=settings.vertex_model,
+            contents="Reply with OK only.",
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                max_output_tokens=8,
+                top_p=0.1,
+            ),
+        )
+        _health_cache_status = "up"
+        _health_cache_ts = now
+        return _health_cache_status
     except Exception as exc:
         logger.warning("Vertex backend health probe failed: %s", exc)
-        return "degraded"
+        _health_cache_status = "degraded"
+        _health_cache_ts = now
+        return _health_cache_status
 
 
 def summarize_news(query: str, context: str) -> str:
@@ -62,6 +88,8 @@ def summarize_news(query: str, context: str) -> str:
     Returns:
         The model's response text.
     """
+    global _health_cache_status, _health_cache_ts
+
     if _client is None:
         # Startup can fail if credentials are briefly unavailable; retry lazily.
         init_vertex()
@@ -113,10 +141,14 @@ Answer strictly and only from the articles above:"""
         logger.info("Gemini AI response in %.2fs", elapsed, extra={"latency_ms": elapsed * 1000})
         if not response.text:
             raise RuntimeError("Gemini AI returned an empty response.")
+        _health_cache_status = "up"
+        _health_cache_ts = time.time()
         return response.text
     except Exception as exc:
         elapsed = time.perf_counter() - start
         VERTEX_LATENCY.labels(model=settings.vertex_model).observe(elapsed)
         VERTEX_ERRORS.labels(model=settings.vertex_model, error_type=type(exc).__name__).inc()
         logger.error("Gemini AI call failed: %s", exc, exc_info=True)
+        _health_cache_status = "degraded"
+        _health_cache_ts = time.time()
         raise
