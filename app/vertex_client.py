@@ -1,38 +1,47 @@
-"""Vertex AI Gemini client for summarizing financial news."""
+"""Gemini AI client for summarizing financial news."""
 
 from __future__ import annotations
 
 import logging
 import time
-from typing import Optional
 
-import vertexai
-from vertexai.generative_models import GenerativeModel
+from google import genai
+from google.genai import types
 
 from app.config import get_settings
-from app.metrics import VERTEX_LATENCY, VERTEX_ERRORS
+from app.metrics import VERTEX_ERRORS, VERTEX_LATENCY
 
 logger = logging.getLogger(__name__)
 
-_model: Optional[GenerativeModel] = None
+_client: genai.Client | None = None
 
 
 def init_vertex() -> None:
-    """Initialize Vertex AI SDK."""
-    global _model
+    """Initialize Gemini AI client (API key or Vertex AI backend)."""
+    global _client
     settings = get_settings()
-    vertexai.init(project=settings.gcp_project_id, location=settings.gcp_region)
-    _model = GenerativeModel(settings.vertex_model)
-    logger.info(
-        "Vertex AI initialized: project=%s, region=%s, model=%s",
-        settings.gcp_project_id,
-        settings.gcp_region,
-        settings.vertex_model,
-    )
+    if settings.gemini_api_key:
+        _client = genai.Client(api_key=settings.gemini_api_key)
+        logger.info(
+            "Gemini AI initialized with API key, model=%s",
+            settings.vertex_model,
+        )
+    else:
+        _client = genai.Client(
+            vertexai=True,
+            project=settings.gcp_project_id,
+            location=settings.gcp_region,
+        )
+        logger.info(
+            "Gemini AI initialized via Vertex AI: project=%s, region=%s, model=%s",
+            settings.gcp_project_id,
+            settings.gcp_region,
+            settings.vertex_model,
+        )
 
 
 def summarize_news(query: str, context: str) -> str:
-    """Send a chat query with news context to Vertex AI and return the summary.
+    """Send a chat query with news context to Gemini AI and return the summary.
 
     Args:
         query: The user's question about financial news.
@@ -41,8 +50,8 @@ def summarize_news(query: str, context: str) -> str:
     Returns:
         The model's response text.
     """
-    if _model is None:
-        raise RuntimeError("Vertex AI not initialized. Call init_vertex() first.")
+    if _client is None:
+        raise RuntimeError("Gemini AI not initialized. Call init_vertex() first.")
 
     settings = get_settings()
     prompt = f"""You are a helpful financial news assistant. Answer the user's question
@@ -62,21 +71,22 @@ Provide a clear, well-structured answer:"""
 
     start = time.perf_counter()
     try:
-        response = _model.generate_content(
-            prompt,
-            generation_config={
-                "temperature": 0.3,
-                "max_output_tokens": 1024,
-                "top_p": 0.8,
-            },
+        response = _client.models.generate_content(
+            model=settings.vertex_model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.3,
+                max_output_tokens=1024,
+                top_p=0.8,
+            ),
         )
         elapsed = time.perf_counter() - start
         VERTEX_LATENCY.labels(model=settings.vertex_model).observe(elapsed)
-        logger.info("Vertex AI response in %.2fs", elapsed, extra={"latency_ms": elapsed * 1000})
+        logger.info("Gemini AI response in %.2fs", elapsed, extra={"latency_ms": elapsed * 1000})
         return response.text
     except Exception as exc:
         elapsed = time.perf_counter() - start
         VERTEX_LATENCY.labels(model=settings.vertex_model).observe(elapsed)
         VERTEX_ERRORS.labels(model=settings.vertex_model, error_type=type(exc).__name__).inc()
-        logger.error("Vertex AI call failed: %s", exc, exc_info=True)
+        logger.error("Gemini AI call failed: %s", exc, exc_info=True)
         raise
