@@ -53,9 +53,7 @@ def init_vertex() -> None:
             settings.vertex_model,
         )
     else:
-        raise RuntimeError(
-            "No AI backend configured. Set USE_VERTEX_AI=true (recommended) or provide GEMINI_API_KEY."
-        )
+        raise RuntimeError("No AI backend configured. Set USE_VERTEX_AI=true (recommended) or provide GEMINI_API_KEY.")
     _initialize_concurrency_guard()
 
 
