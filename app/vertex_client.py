@@ -40,6 +40,18 @@ def init_vertex() -> None:
         )
 
 
+def get_vertex_backend_status() -> str:
+    """Return lightweight backend status for health endpoint."""
+    global _client
+    try:
+        if _client is None:
+            init_vertex()
+        return "up" if _client is not None else "degraded"
+    except Exception as exc:
+        logger.warning("Vertex backend health probe failed: %s", exc)
+        return "degraded"
+
+
 def summarize_news(query: str, context: str) -> str:
     """Send a chat query with news context to Gemini AI and return the summary.
 

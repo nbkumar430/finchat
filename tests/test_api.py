@@ -23,6 +23,7 @@ def test_health_endpoint(client):
     assert data["status"] == "ok"
     assert "tickers" in data
     assert isinstance(data["tickers"], list)
+    assert data["ai_backend_status"] in ("up", "degraded")
 
 
 def test_tickers_endpoint(client):

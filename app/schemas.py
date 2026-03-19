@@ -57,6 +57,7 @@ class HealthResponse(BaseModel):
     version: str = ""
     articles_loaded: int = 0
     tickers: list[str] = []
+    ai_backend_status: str = "degraded"
 
 
 class ErrorResponse(BaseModel):

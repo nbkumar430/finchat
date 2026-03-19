@@ -36,7 +36,7 @@ from app.schemas import (
     HealthResponse,
 )
 from app.tracing import setup_tracing
-from app.vertex_client import init_vertex, summarize_news
+from app.vertex_client import get_vertex_backend_status, init_vertex, summarize_news
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +214,7 @@ async def health():
         version=settings.app_version,
         articles_loaded=sum(len(news_store.get_by_ticker(t, limit=100)) for t in news_store.tickers),
         tickers=news_store.tickers,
+        ai_backend_status=get_vertex_backend_status(),
     )
 
 
