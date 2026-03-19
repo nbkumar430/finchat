@@ -1,0 +1,227 @@
+name: Rollback – Decommission All Resources
+
+# This workflow is MANUAL ONLY (no automatic triggers).
+# It provides two modes:
+#   dry-run  → prints what would be deleted without touching anything
+#   execute  → permanently destroys all FinChat GCP resources
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Decommission mode"
+        required: true
+        default: "dry-run"
+        type: choice
+        options:
+          - dry-run
+          - execute
+      confirm:
+        description: "Type 'yes-delete' to confirm destruction (required for execute mode)"
+        required: false
+        default: ""
+
+env:
+  PROJECT_ID: project-ede0958a-eb5c-4225-94d
+  REGION: us-central1
+  APP_SERVICE: finchat-app
+  GRAFANA_SERVICE: finchat-grafana
+  AR_REPO: finchat-repo
+  SECRET_NAME: GEMINI_API_KEY
+  API_KEY_UID: e5dbaa75-c3e0-4f4a-9f1b-4fd1fd634ed6
+  APP_SA: finchat-app-sa@project-ede0958a-eb5c-4225-94d.iam.gserviceaccount.com
+  DEPLOY_SA: finchat-deploy-sa@project-ede0958a-eb5c-4225-94d.iam.gserviceaccount.com
+  COMPUTE_SA: 335507671966-compute@developer.gserviceaccount.com
+  WIF_POOL: github-pool
+  WIF_PROVIDER_NAME: github-provider
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  safety-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate execute confirmation
+        run: |
+          MODE="${{ github.event.inputs.mode }}"
+          CONFIRM="${{ github.event.inputs.confirm }}"
+          if [[ "$MODE" == "execute" && "$CONFIRM" != "yes-delete" ]]; then
+            echo "❌ ERROR: execute mode requires 'yes-delete' in the confirm field."
+            echo "   Please re-run the workflow with confirm='yes-delete'."
+            exit 1
+          fi
+          echo "✅ Safety check passed (mode=$MODE)"
+
+  decommission:
+    runs-on: ubuntu-latest
+    needs: safety-check
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Authenticate to GCP ──────────────────────────────────────
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SA_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Set project
+        run: gcloud config set project ${{ env.PROJECT_ID }}
+
+      # ── Show current state before any changes ────────────────────
+      - name: Inventory – current Cloud Run services
+        run: |
+          echo "=== Cloud Run Services ==="
+          gcloud run services list --region ${{ env.REGION }} || true
+          echo ""
+          echo "=== Artifact Registry Repos ==="
+          gcloud artifacts repositories list --location ${{ env.REGION }} || true
+          echo ""
+          echo "=== Secrets ==="
+          gcloud secrets list || true
+
+      # ── Step 1: Cloud Run services ───────────────────────────────
+      - name: "1/7 Delete Cloud Run: ${{ env.APP_SERVICE }}"
+        if: github.event.inputs.mode == 'execute'
+        run: |
+          gcloud run services delete ${{ env.APP_SERVICE }} \
+            --region ${{ env.REGION }} --quiet || true
+        continue-on-error: true
+
+      - name: "1/7 Delete Cloud Run: ${{ env.GRAFANA_SERVICE }}"
+        if: github.event.inputs.mode == 'execute'
+        run: |
+          gcloud run services delete ${{ env.GRAFANA_SERVICE }} \
+            --region ${{ env.REGION }} --quiet || true
+        continue-on-error: true
+
+      # ── Step 2: Artifact Registry ────────────────────────────────
+      - name: "2/7 Delete Artifact Registry repo: ${{ env.AR_REPO }}"
+        if: github.event.inputs.mode == 'execute'
+        run: |
+          gcloud artifacts repositories delete ${{ env.AR_REPO }} \
+            --location ${{ env.REGION }} --quiet || true
+        continue-on-error: true
+
+      # ── Step 3: Secret Manager ───────────────────────────────────
+      - name: "3/7 Delete Secret: ${{ env.SECRET_NAME }}"
+        if: github.event.inputs.mode == 'execute'
+        run: |
+          gcloud secrets delete ${{ env.SECRET_NAME }} --quiet || true
+        continue-on-error: true
+
+      # ── Step 4: GCP API key ──────────────────────────────────────
+      - name: "4/7 Delete API key: ${{ env.API_KEY_UID }}"
+        if: github.event.inputs.mode == 'execute'
+        run: |
+          gcloud services api-keys delete ${{ env.API_KEY_UID }} --quiet || true
+        continue-on-error: true
+
+      # ── Step 5: IAM bindings ─────────────────────────────────────
+      - name: "5/7 Remove IAM bindings"
+        if: github.event.inputs.mode == 'execute'
+        run: |
+          remove_binding() {
+            gcloud projects remove-iam-policy-binding ${{ env.PROJECT_ID }} \
+              --member="serviceAccount:$1" --role="$2" \
+              --condition=None --quiet 2>/dev/null || true
+          }
+          # App SA
+          remove_binding "${{ env.APP_SA }}"    "roles/secretmanager.secretAccessor"
+          remove_binding "${{ env.APP_SA }}"    "roles/run.invoker"
+          # Deploy SA
+          remove_binding "${{ env.DEPLOY_SA }}" "roles/run.admin"
+          remove_binding "${{ env.DEPLOY_SA }}" "roles/artifactregistry.writer"
+          remove_binding "${{ env.DEPLOY_SA }}" "roles/secretmanager.secretAccessor"
+          remove_binding "${{ env.DEPLOY_SA }}" "roles/iam.serviceAccountTokenCreator"
+          # Compute SA
+          remove_binding "${{ env.COMPUTE_SA }}" "roles/secretmanager.secretAccessor"
+          echo "IAM bindings removed."
+        continue-on-error: true
+
+      # ── Step 6: Service accounts ─────────────────────────────────
+      - name: "6/7 Delete service accounts"
+        if: github.event.inputs.mode == 'execute'
+        run: |
+          gcloud iam service-accounts delete ${{ env.APP_SA }}    --quiet || true
+          gcloud iam service-accounts delete ${{ env.DEPLOY_SA }} --quiet || true
+        continue-on-error: true
+
+      # ── Step 7: Workload Identity Pool ───────────────────────────
+      - name: "7/7 Delete Workload Identity Pool & Provider"
+        if: github.event.inputs.mode == 'execute'
+        run: |
+          gcloud iam workload-identity-pools providers delete \
+            ${{ env.WIF_PROVIDER_NAME }} \
+            --workload-identity-pool=${{ env.WIF_POOL }} \
+            --location=global --quiet || true
+
+          gcloud iam workload-identity-pools delete \
+            ${{ env.WIF_POOL }} \
+            --location=global --quiet || true
+        continue-on-error: true
+
+      # ── Post-decommission inventory ──────────────────────────────
+      - name: Post-decommission verification
+        if: always()
+        run: |
+          echo "=== Remaining Cloud Run Services ==="
+          gcloud run services list --region ${{ env.REGION }} 2>/dev/null || echo "(none)"
+          echo ""
+          echo "=== Remaining Artifact Registry Repos ==="
+          gcloud artifacts repositories list --location ${{ env.REGION }} 2>/dev/null || echo "(none)"
+          echo ""
+          echo "=== Remaining Secrets ==="
+          gcloud secrets list 2>/dev/null || echo "(none)"
+
+      # ── Dry-run: print what WOULD be deleted ─────────────────────
+      - name: "Dry-run summary (no changes made)"
+        if: github.event.inputs.mode == 'dry-run'
+        run: |
+          echo ""
+          echo "======================================================"
+          echo "  DRY-RUN: The following resources WOULD be deleted:"
+          echo "======================================================"
+          echo ""
+          echo "Cloud Run Services:"
+          echo "  - ${{ env.APP_SERVICE }}      (region: ${{ env.REGION }})"
+          echo "  - ${{ env.GRAFANA_SERVICE }}  (region: ${{ env.REGION }})"
+          echo ""
+          echo "Artifact Registry:"
+          echo "  - ${{ env.AR_REPO }}  (location: ${{ env.REGION }})"
+          echo "    └─ All container images inside the repository"
+          echo ""
+          echo "Secret Manager:"
+          echo "  - ${{ env.SECRET_NAME }}"
+          echo ""
+          echo "GCP API Key:"
+          echo "  - UID: ${{ env.API_KEY_UID }}"
+          echo ""
+          echo "IAM Bindings removed from:"
+          echo "  - ${{ env.APP_SA }}"
+          echo "  - ${{ env.DEPLOY_SA }}"
+          echo "  - ${{ env.COMPUTE_SA }}"
+          echo ""
+          echo "Service Accounts deleted:"
+          echo "  - ${{ env.APP_SA }}"
+          echo "  - ${{ env.DEPLOY_SA }}"
+          echo ""
+          echo "Workload Identity (GitHub OIDC):"
+          echo "  - Pool:     ${{ env.WIF_POOL }}"
+          echo "  - Provider: ${{ env.WIF_PROVIDER_NAME }}"
+          echo ""
+          echo "NOT deleted by this workflow:"
+          echo "  - GCP Project itself (${{ env.PROJECT_ID }})"
+          echo "  - Billing account link"
+          echo "  - Enabled APIs (must be manually disabled if desired)"
+          echo ""
+          echo "======================================================"
+          echo "  To execute: re-run with mode=execute and"
+          echo "  confirm=yes-delete"
+          echo "======================================================"

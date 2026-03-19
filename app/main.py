@@ -39,6 +39,43 @@ from app.vertex_client import init_vertex, summarize_news
 
 logger = logging.getLogger(__name__)
 
+# ── Guardrail constants ───────────────────────────────────────────────
+# Only these tickers are supported — derived from the bundled stock_news.json
+SUPPORTED_TICKERS: frozenset[str] = frozenset(
+    {"AAPL", "MSFT", "AMZN", "NFLX", "NVDA", "INTC", "IBM"}
+)
+
+# Company-name synonyms mapped to their ticker for query intent detection
+_TICKER_SYNONYMS: dict[str, frozenset[str]] = {
+    "AAPL": frozenset({"apple", "aapl", "iphone", "ipad", "mac", "tim cook"}),
+    "MSFT": frozenset({"microsoft", "msft", "azure", "windows", "satya nadella"}),
+    "AMZN": frozenset({"amazon", "amzn", "aws", "prime", "andy jassy"}),
+    "NFLX": frozenset({"netflix", "nflx", "streaming"}),
+    "NVDA": frozenset({"nvidia", "nvda", "gpu", "jensen huang"}),
+    "INTC": frozenset({"intel", "intc", "pat gelsinger"}),
+    "IBM": frozenset({"ibm", "international business machines", "watson"}),
+}
+
+# Flat set of all keywords for fast query scanning
+_ALL_SCOPE_KEYWORDS: frozenset[str] = frozenset(
+    kw for synonyms in _TICKER_SYNONYMS.values() for kw in synonyms
+)
+
+_OUT_OF_SCOPE_MSG = (
+    "⚠️ I'm out of my scope. I can only answer questions about financial news "
+    "for the following stocks: {tickers}. "
+    "Please ask about one of these companies: "
+    "Apple (AAPL), Microsoft (MSFT), Amazon (AMZN), Netflix (NFLX), "
+    "Nvidia (NVDA), Intel (INTC), or IBM."
+)
+
+
+def _query_is_in_scope(query: str) -> bool:
+    """Return True if the query references at least one supported company/ticker."""
+    q = query.lower()
+    return any(kw in q for kw in _ALL_SCOPE_KEYWORDS)
+
+
 # ── Global state ─────────────────────────────────────────────────────
 news_store = NewsStore()
 
@@ -215,6 +252,27 @@ async def chat(request: ChatRequest):
         extra={"user_query": query[:100], "ticker": ticker},
     )
 
+    # ── Guardrail 1: reject unsupported tickers immediately ───────────
+    if ticker and ticker not in SUPPORTED_TICKERS:
+        logger.warning("Guardrail: unsupported ticker=%s", ticker)
+        return ChatResponse(
+            answer=(
+                f"⚠️ I'm out of my scope. Ticker '{ticker}' is not in my knowledge base. "
+                f"I can only answer questions about: {', '.join(sorted(SUPPORTED_TICKERS))}."
+            ),
+            sources=[],
+            ticker_filter=ticker,
+        )
+
+    # ── Guardrail 2: reject off-topic queries (no recognized company/ticker) ──
+    if not ticker and not _query_is_in_scope(query):
+        logger.warning("Guardrail: off-topic query=%r", query[:80])
+        return ChatResponse(
+            answer=_OUT_OF_SCOPE_MSG.format(tickers=", ".join(sorted(SUPPORTED_TICKERS))),
+            sources=[],
+            ticker_filter=None,
+        )
+
     # Search for relevant articles
     articles = news_store.search(query, ticker=ticker, max_results=5)
 
@@ -225,8 +283,10 @@ async def chat(request: ChatRequest):
 
     if not articles:
         return ChatResponse(
-            answer="I couldn't find any relevant news articles for your query. "
-            f"Available tickers: {', '.join(news_store.tickers)}",
+            answer=(
+                "I couldn't find any relevant news articles for your query within "
+                f"the available data. Supported tickers: {', '.join(sorted(SUPPORTED_TICKERS))}."
+            ),
             sources=[],
             ticker_filter=ticker,
         )
