@@ -1,3 +1,6 @@
+.venv/
+venv/
+.DS_Store
 __pycache__/
 *.pyc
 *.pyo
@@ -10,3 +13,5 @@ build/
 .ruff_cache/
 .mypy_cache/
 *.log
+data/*.sqlite3
+data/*.db

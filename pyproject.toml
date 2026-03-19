@@ -9,7 +9,16 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
-ignore = ["E501"]
+ignore = ["E501", "UP017"]
+
+# Keep typing.Optional in ORM/FastAPI code paths: SQLAlchemy 2 + Python 3.9 eval of Mapped[str | None] fails;
+# Pydantic/FastAPI similarly rejects Session | None in Depends() on 3.9.
+[tool.ruff.lint.per-file-ignores]
+"app/orm_models.py" = ["UP007", "UP037"]
+"app/chat_repository.py" = ["UP007"]
+"app/database.py" = ["UP007"]
+"app/main.py" = ["UP007"]
+"app/openrouter_client.py" = ["UP007"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

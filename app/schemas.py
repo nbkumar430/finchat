@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -21,6 +22,11 @@ class ChatRequest(BaseModel):
         None,
         description="Optional ticker symbol to filter news (e.g., AAPL, MSFT)",
         json_schema_extra={"example": "AAPL"},
+    )
+    session_id: Optional[str] = Field(  # noqa: UP007
+        None,
+        description="Existing chat thread ID from POST /api/sessions or prior ChatResponse",
+        max_length=36,
     )
 
 
@@ -50,8 +56,39 @@ class ChatResponse(BaseModel):
     )
     answer_source: str = Field(
         "gemini",
-        description="gemini | extractive | headlines — how the answer was produced",
+        description="gemini | openrouter | extractive | headlines — how the answer was produced",
     )
+    session_id: Optional[str] = Field(  # noqa: UP007
+        None,
+        description="Chat thread ID when persistence is enabled; pass on the next request to continue the thread",
+    )
+
+
+class SessionCreateResponse(BaseModel):
+    """Response after creating a new chat session."""
+
+    session_id: str
+    created_at: datetime
+
+
+class ChatMessageRead(BaseModel):
+    """One persisted chat turn (user or assistant)."""
+
+    id: int
+    role: str
+    content: str
+    ticker_filter: Optional[str] = None  # noqa: UP007
+    answer_source: Optional[str] = None  # noqa: UP007
+    fallback_mode: Optional[bool] = None  # noqa: UP007
+    sources: list[ArticleRef] = Field(default_factory=list)
+    created_at: datetime
+
+
+class MessagesListResponse(BaseModel):
+    """Paginated-style list of messages for a session."""
+
+    session_id: str
+    messages: list[ChatMessageRead]
 
 
 class HealthResponse(BaseModel):

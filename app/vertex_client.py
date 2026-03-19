@@ -37,6 +37,23 @@ def init_vertex() -> None:
     """Initialize Gemini AI client (API key or Vertex AI backend)."""
     global _client
     settings = get_settings()
+    if settings.summarization_provider == "openrouter":
+        try:
+            from app.openrouter_client import get_openrouter_api_key
+
+            get_openrouter_api_key(settings)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "OpenRouter API key not loaded at startup (will retry on first chat): %s",
+                exc,
+            )
+        _client = None
+        _initialize_concurrency_guard()
+        logger.info(
+            "Summarization provider=openrouter model=%s (Vertex client skipped)",
+            settings.openrouter_model,
+        )
+        return
     # Prefer Vertex AI runtime auth on Cloud Run to avoid Gemini API key quota limits.
     if settings.use_vertex_ai:
         _client = genai.Client(
@@ -263,6 +280,20 @@ def get_vertex_backend_status() -> str:
     if now - _health_cache_ts < _HEALTH_TTL_SECONDS:
         return _health_cache_status
 
+    if settings.summarization_provider == "openrouter":
+        try:
+            from app.openrouter_client import probe_openrouter
+
+            probe_openrouter(settings)
+            _set_active_model(settings.openrouter_model)
+            _set_active_backend("openrouter")
+            _health_cache_status = "up"
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("OpenRouter health probe failed: %s", exc)
+            _health_cache_status = "degraded"
+        _health_cache_ts = now
+        return _health_cache_status
+
     try:
         if _client is None:
             init_vertex()
@@ -342,39 +373,9 @@ def get_vertex_backend_status() -> str:
         return _health_cache_status
 
 
-def summarize_news(query: str, context: str) -> str:
-    """Send a chat query with news context to Gemini AI and return the summary.
-
-    Args:
-        query: The user's question about financial news.
-        context: Concatenated relevant news articles for grounding.
-
-    Returns:
-        The model's response text.
-    """
-    global _health_cache_status, _health_cache_ts
-
-    if _client is None:
-        # Startup can fail if credentials are briefly unavailable; retry lazily.
-        init_vertex()
-    if _client is None:
-        raise RuntimeError("Gemini AI initialization failed.")
-    _initialize_concurrency_guard()
-
-    settings = get_settings()
-    if _is_circuit_open():
-        raise RuntimeError("AI backend temporarily overloaded (circuit open).")
-
-    # Bound prompt size to reduce token pressure during spikes.
-    context = context[:7000]
-    model = _current_model()
-    cache_key = _cache_key(query=query, context=context, model=f"{_active_backend}:{model}")
-    cached_answer = _cache_get(cache_key)
-    if cached_answer is not None:
-        logger.info("Gemini cache hit for model=%s", model)
-        return cached_answer
-
-    prompt = f"""You are FinChat, a financial news assistant with STRICT operating boundaries.
+def _build_finchat_prompt(query: str, context: str) -> str:
+    """Shared grounded-RAG prompt for Vertex, Gemini API, and OpenRouter."""
+    return f"""You are FinChat, a financial news assistant with STRICT operating boundaries.
 
 SCOPE: You only have knowledge about these stock tickers: AAPL, MSFT, AMZN, NFLX, NVDA, INTC, IBM.
 
@@ -401,6 +402,100 @@ MANDATORY RULES — follow every rule without exception:
 User question: {query}
 
 Answer strictly and only from the articles above:"""
+
+
+def _summarize_news_openrouter(query: str, context: str) -> str:
+    """OpenRouter chat completions path (same prompt and cache semantics as Gemini)."""
+    global _health_cache_status, _health_cache_ts
+    from app.openrouter_client import openrouter_complete_user_prompt
+
+    _initialize_concurrency_guard()
+    settings = get_settings()
+    if _is_circuit_open():
+        raise RuntimeError("AI backend temporarily overloaded (circuit open).")
+
+    context = context[:7000]
+    model_label = settings.openrouter_model
+    cache_key = _cache_key(query=query, context=context, model=f"openrouter:{model_label}")
+    cached_answer = _cache_get(cache_key)
+    if cached_answer is not None:
+        logger.info("OpenRouter cache hit model=%s", model_label)
+        return cached_answer
+
+    prompt = _build_finchat_prompt(query, context)
+    start = time.perf_counter()
+    sem = _concurrency_sem
+    if sem is None:
+        raise RuntimeError("AI concurrency guard not initialized.")
+    acquired = sem.acquire(timeout=1.5)
+    if not acquired:
+        raise RuntimeError("AI backend busy; too many concurrent requests.")
+    try:
+        text = openrouter_complete_user_prompt(settings, prompt)
+        elapsed = time.perf_counter() - start
+        VERTEX_LATENCY.labels(model=model_label).observe(elapsed)
+        _health_cache_status = "up"
+        _health_cache_ts = time.time()
+        _record_success()
+        _set_active_model(model_label)
+        _set_active_backend("openrouter")
+        _cache_put(cache_key, text)
+        logger.info(
+            "OpenRouter response model=%s in %.2fs",
+            model_label,
+            elapsed,
+            extra={"latency_ms": elapsed * 1000},
+        )
+        return text
+    except Exception as exc:  # noqa: BLE001
+        elapsed = time.perf_counter() - start
+        VERTEX_LATENCY.labels(model=model_label).observe(elapsed)
+        VERTEX_ERRORS.labels(model=model_label, error_type=type(exc).__name__).inc()
+        _record_failure()
+        logger.error("OpenRouter call failed model=%s: %s", model_label, exc, exc_info=True)
+        _health_cache_status = "degraded"
+        _health_cache_ts = time.time()
+        raise
+    finally:
+        sem.release()
+
+
+def summarize_news(query: str, context: str) -> str:
+    """Send a chat query with news context to Gemini AI and return the summary.
+
+    Args:
+        query: The user's question about financial news.
+        context: Concatenated relevant news articles for grounding.
+
+    Returns:
+        The model's response text.
+    """
+    global _health_cache_status, _health_cache_ts
+
+    settings = get_settings()
+    if settings.summarization_provider == "openrouter":
+        return _summarize_news_openrouter(query, context)
+
+    if _client is None:
+        # Startup can fail if credentials are briefly unavailable; retry lazily.
+        init_vertex()
+    if _client is None:
+        raise RuntimeError("Gemini AI initialization failed.")
+    _initialize_concurrency_guard()
+
+    if _is_circuit_open():
+        raise RuntimeError("AI backend temporarily overloaded (circuit open).")
+
+    # Bound prompt size to reduce token pressure during spikes.
+    context = context[:7000]
+    model = _current_model()
+    cache_key = _cache_key(query=query, context=context, model=f"{_active_backend}:{model}")
+    cached_answer = _cache_get(cache_key)
+    if cached_answer is not None:
+        logger.info("Gemini cache hit for model=%s", model)
+        return cached_answer
+
+    prompt = _build_finchat_prompt(query, context)
 
     start = time.perf_counter()
     sem = _concurrency_sem

@@ -3,6 +3,7 @@
 import os
 from functools import lru_cache
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
@@ -18,6 +19,20 @@ class Settings(BaseSettings):
     use_vertex_ai: bool = os.getenv("USE_VERTEX_AI", "true").lower() == "true"
     # After all Vertex model IDs fail (e.g. 404), retry using Gemini Developer API if GEMINI_API_KEY is set.
     vertex_fallback_to_api_key: bool = os.getenv("VERTEX_FALLBACK_TO_API_KEY", "true").lower() == "true"
+    # summarization_provider: vertex (default) | openrouter | gemini_api
+    summarization_provider: str = os.getenv("SUMMARIZATION_PROVIDER", "vertex").strip().lower()
+    # OpenRouter (https://openrouter.ai/) — set OPEN_ROUTER_API_KEY on Cloud Run (legacy: OPENROUTER_API_KEY)
+    open_router_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("OPEN_ROUTER_API_KEY", "OPENROUTER_API_KEY"),
+    )
+    openrouter_model: str = os.getenv("OPENROUTER_MODEL", "google/gemini-3-flash-preview")
+    openrouter_base_url: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    openrouter_http_referer: str = os.getenv("OPENROUTER_HTTP_REFERER", "https://github.com/finchat")
+    openrouter_app_title: str = os.getenv("OPENROUTER_APP_TITLE", "FinChat")
+    openrouter_temperature: float = float(os.getenv("OPENROUTER_TEMPERATURE", "0.3"))
+    openrouter_max_output_tokens: int = int(os.getenv("OPENROUTER_MAX_OUTPUT_TOKENS", "768"))
+    openrouter_timeout_seconds: float = float(os.getenv("OPENROUTER_TIMEOUT_SECONDS", "90"))
     gemini_api_fallback_models: str = os.getenv(
         "GEMINI_API_FALLBACK_MODELS",
         "gemini-2.0-flash,gemini-2.0-flash-lite,gemini-1.5-flash",
@@ -42,6 +57,14 @@ class Settings(BaseSettings):
 
     # Paths
     news_json_path: str = os.getenv("NEWS_JSON_PATH", "app/stock_news.json")
+
+    # Chat persistence (SQLite; optional GCS backup/restore for Cloud Run / DR)
+    chat_sessions_enabled: bool = os.getenv("CHAT_SESSIONS_ENABLED", "true").lower() == "true"
+    chat_sqlite_path: str = os.getenv("CHAT_SQLITE_PATH", "data/finchat_chat.sqlite3")
+    gcs_chat_db_bucket: str = os.getenv("GCS_CHAT_DB_BUCKET", "")
+    gcs_chat_db_object: str = os.getenv("GCS_CHAT_DB_OBJECT", "finchat_chat.sqlite3")
+    restore_chat_db_from_gcs: bool = os.getenv("RESTORE_CHAT_DB_FROM_GCS", "false").lower() == "true"
+    backup_chat_db_on_shutdown: bool = os.getenv("BACKUP_CHAT_DB_ON_SHUTDOWN", "false").lower() == "true"
 
     # Observability
     otel_service_name: str = "finchat"

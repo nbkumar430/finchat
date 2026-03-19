@@ -10,15 +10,20 @@ from __future__ import annotations
 import logging
 import time
 from contextlib import asynccontextmanager
+from typing import Annotated, Optional
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from sqlalchemy.orm import Session
 
+from app import chat_repository
+from app.chat_storage_gcs import backup_chat_db_if_configured, restore_chat_db_if_configured
 from app.config import get_settings
+from app.database import configure_engine, get_db, init_db
 from app.local_summarizer import build_extractive_answer
 from app.logging_config import setup_logging
 from app.metrics import (
@@ -36,6 +41,8 @@ from app.schemas import (
     ChatResponse,
     ErrorResponse,
     HealthResponse,
+    MessagesListResponse,
+    SessionCreateResponse,
 )
 from app.tracing import setup_tracing
 from app.vertex_client import get_vertex_backend_status, init_vertex, summarize_news
@@ -100,6 +107,11 @@ async def lifespan(app: FastAPI):
     news_store.load(settings.news_json_path)
     logger.info("News store loaded successfully")
 
+    # Chat persistence: SQLite (+ optional GCS restore before schema init)
+    configure_engine(settings)
+    restore_chat_db_if_configured(settings)
+    init_db()
+
     # Initialize Vertex AI
     try:
         init_vertex()
@@ -117,6 +129,7 @@ async def lifespan(app: FastAPI):
     )
 
     yield
+    backup_chat_db_if_configured(get_settings())
     logger.info("Application shutting down")
 
 
@@ -251,10 +264,14 @@ async def list_tickers():
     description=(
         "Submit a question about recent financial news. Optionally filter "
         "by ticker symbol. The AI will search relevant articles and provide "
-        "a grounded summary."
+        "a grounded summary. "
+        "Pass session_id to continue a thread (see POST /api/sessions)."
     ),
 )
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+    db: Annotated[Optional[Session], Depends(get_db)],
+):
     """Process a chat query about financial news."""
     query = request.query.strip()
     ticker = request.ticker.upper() if request.ticker else None
@@ -266,26 +283,75 @@ async def chat(request: ChatRequest):
         extra={"user_query": query[:100], "ticker": ticker},
     )
 
+    session_id_out: Optional[str] = None
+    if db is not None:
+        if request.session_id:
+            sess = chat_repository.get_session(db, request.session_id)
+            if sess is None:
+                raise HTTPException(status_code=404, detail="Unknown session_id")
+            session_id_out = sess.id
+        else:
+            sess = chat_repository.create_session(db)
+            session_id_out = sess.id
+        try:
+            chat_repository.append_message(
+                db,
+                session_id=session_id_out,
+                role="user",
+                content=query,
+                ticker_filter=ticker,
+            )
+        except Exception as exc:
+            logger.warning("Chat persistence failed (user turn): %s", exc)
+
+    def respond(
+        answer: str,
+        sources: list[ArticleRef],
+        answer_source: str,
+        *,
+        fallback_mode: bool = False,
+    ) -> ChatResponse:
+        if db is not None and session_id_out:
+            try:
+                chat_repository.append_message(
+                    db,
+                    session_id=session_id_out,
+                    role="assistant",
+                    content=answer,
+                    ticker_filter=ticker,
+                    answer_source=answer_source,
+                    sources=sources or None,
+                    fallback_mode=fallback_mode,
+                )
+            except Exception as exc:
+                logger.warning("Chat persistence failed (assistant turn): %s", exc)
+        return ChatResponse(
+            answer=answer,
+            sources=sources,
+            ticker_filter=ticker,
+            fallback_mode=fallback_mode,
+            answer_source=answer_source,
+            session_id=session_id_out,
+        )
+
     # ── Guardrail 1: reject unsupported tickers immediately ───────────
     if ticker and ticker not in SUPPORTED_TICKERS:
         logger.warning("Guardrail: unsupported ticker=%s", ticker)
-        return ChatResponse(
+        return respond(
             answer=(
                 f"⚠️ I'm out of my scope. Ticker '{ticker}' is not in my knowledge base. "
                 f"I can only answer questions about: {', '.join(sorted(SUPPORTED_TICKERS))}."
             ),
             sources=[],
-            ticker_filter=ticker,
             answer_source="headlines",
         )
 
     # ── Guardrail 2: reject off-topic queries (no recognized company/ticker) ──
     if not ticker and not _query_is_in_scope(query):
         logger.warning("Guardrail: off-topic query=%r", query[:80])
-        return ChatResponse(
+        return respond(
             answer=_OUT_OF_SCOPE_MSG.format(tickers=", ".join(sorted(SUPPORTED_TICKERS))),
             sources=[],
-            ticker_filter=None,
             answer_source="headlines",
         )
 
@@ -297,13 +363,12 @@ async def chat(request: ChatRequest):
         articles = news_store.get_by_ticker(ticker, limit=3)
 
     if not articles:
-        return ChatResponse(
+        return respond(
             answer=(
                 "I couldn't find any relevant news articles for your query within "
                 f"the available data. Supported tickers: {', '.join(sorted(SUPPORTED_TICKERS))}."
             ),
             sources=[],
-            ticker_filter=ticker,
             answer_source="headlines",
         )
 
@@ -317,16 +382,19 @@ async def chat(request: ChatRequest):
         )
     context = "\n---\n".join(context_parts)
 
-    # Call Vertex AI for summarization
+    # Call LLM (Vertex / Gemini API / OpenRouter) for summarization
     sources = [ArticleRef(title=a.title, ticker=a.ticker, link=a.link) for a in articles]
     fallback_mode = False
-    answer_source = "gemini"
+    chat_settings = get_settings()
+    answer_source = (
+        "openrouter" if chat_settings.summarization_provider == "openrouter" else "gemini"
+    )
     try:
         # Offload sync model call to threadpool to avoid blocking event loop under load.
         answer = await run_in_threadpool(summarize_news, query, context)
     except Exception as exc:
         logger.warning(
-            "Gemini summarization failed; using extractive TF-IDF summary from JSON: %s",
+            "LLM summarization failed; using extractive TF-IDF summary from JSON: %s",
             exc,
         )
         ERROR_COUNT.labels(type="vertex_ai_unavailable", endpoint="/api/chat").inc()
@@ -340,10 +408,45 @@ async def chat(request: ChatRequest):
             answer_source = "headlines"
             fallback_mode = True
 
-    return ChatResponse(
+    return respond(
         answer=answer,
         sources=sources,
-        ticker_filter=ticker,
-        fallback_mode=fallback_mode,
         answer_source=answer_source,
+        fallback_mode=fallback_mode,
+    )
+
+
+@app.post(
+    "/api/sessions",
+    response_model=SessionCreateResponse,
+    tags=["Chat"],
+    summary="Create a chat session",
+    description="Create an empty chat thread. Optional: omit otherwise /api/chat creates one automatically.",
+)
+async def create_chat_session_endpoint(db: Annotated[Optional[Session], Depends(get_db)]):
+    if db is None:
+        raise HTTPException(status_code=503, detail="Chat session persistence is disabled")
+    row = chat_repository.create_session(db)
+    return SessionCreateResponse(session_id=row.id, created_at=row.created_at)
+
+
+@app.get(
+    "/api/sessions/{session_id}/messages",
+    response_model=MessagesListResponse,
+    tags=["Chat"],
+    summary="List messages in a session",
+    description="Return persisted turns for a session (user and assistant), oldest first.",
+)
+async def list_chat_session_messages(
+    session_id: str,
+    db: Annotated[Optional[Session], Depends(get_db)],
+):
+    if db is None:
+        raise HTTPException(status_code=503, detail="Chat session persistence is disabled")
+    if chat_repository.get_session(db, session_id) is None:
+        raise HTTPException(status_code=404, detail="Unknown session_id")
+    rows = chat_repository.list_messages(db, session_id)
+    return MessagesListResponse(
+        session_id=session_id,
+        messages=[chat_repository.orm_message_to_read(m) for m in rows],
     )

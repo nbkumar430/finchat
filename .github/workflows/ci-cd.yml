@@ -108,6 +108,7 @@ jobs:
       - name: Deploy app to Cloud Run
         id: deploy_app
         run: |
+          # --update-env-vars merges: keeps OPEN_ROUTER_API_KEY etc. if you set them in the console.
           gcloud run deploy ${{ env.APP_SERVICE }} \
             --image ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.APP_IMAGE }}:${{ github.sha }} \
             --region ${{ env.REGION }} \
@@ -119,8 +120,7 @@ jobs:
             --min-instances 0 \
             --max-instances 5 \
             --service-account ${{ env.APP_RUNTIME_SA }} \
-            --set-env-vars "GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},LOG_LEVEL=INFO,USE_VERTEX_AI=true,VERTEX_FALLBACK_TO_API_KEY=true" \
-            --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest"
+            --update-env-vars "GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},LOG_LEVEL=INFO,USE_VERTEX_AI=false,VERTEX_FALLBACK_TO_API_KEY=false,SUMMARIZATION_PROVIDER=openrouter,OPENROUTER_MODEL=google/gemini-3-flash-preview"
           APP_URL=$(gcloud run services describe ${{ env.APP_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')
           echo "app_url=${APP_URL}" >> "$GITHUB_OUTPUT"
 

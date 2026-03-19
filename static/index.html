@@ -126,6 +126,38 @@ const tickerSelect = document.getElementById('ticker');
 const sendBtn = document.getElementById('sendBtn');
 const fallbackBanner = document.getElementById('fallbackBanner');
 const datasetBanner = document.getElementById('datasetBanner');
+const SESSION_STORAGE_KEY = 'finchat_session_id';
+
+function getSessionId() {
+  return sessionStorage.getItem(SESSION_STORAGE_KEY);
+}
+
+function setSessionId(id) {
+  if (id) sessionStorage.setItem(SESSION_STORAGE_KEY, id);
+}
+
+async function loadSessionHistory() {
+  const sid = getSessionId();
+  if (!sid) return;
+  try {
+    const resp = await fetch(`/api/sessions/${encodeURIComponent(sid)}/messages`);
+    if (resp.status === 404) {
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      return;
+    }
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const welcome = document.querySelector('.welcome');
+    if (welcome) welcome.remove();
+    data.messages.forEach((m) => {
+      const isUser = m.role === 'user';
+      const src = isUser ? null : (m.sources || []);
+      addMessage(m.content, isUser ? 'user' : 'bot', src);
+    });
+  } catch (_) { /* persistence optional */ }
+}
+
+window.addEventListener('DOMContentLoaded', () => { loadSessionHistory(); });
 
 function addMessage(text, role, sources) {
   const welcome = document.querySelector('.welcome');
@@ -173,14 +205,18 @@ async function sendChat() {
   msgContainer.scrollTop = msgContainer.scrollHeight;
 
   try {
+    const sid = getSessionId();
+    const payload = { query, ticker };
+    if (sid) payload.session_id = sid;
     const resp = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, ticker }),
+      body: JSON.stringify(payload),
     });
     const data = await resp.json();
     typing.remove();
     if (resp.ok) {
+      if (data.session_id) setSessionId(data.session_id);
       fallbackBanner.style.display = data.fallback_mode ? 'block' : 'none';
       const isExtractive = data.answer_source === 'extractive';
       datasetBanner.style.display = isExtractive ? 'block' : 'none';

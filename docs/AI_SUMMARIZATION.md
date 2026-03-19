@@ -8,6 +8,7 @@ Summarization modes:
 |------|------|------|
 | **Vertex AI** | `USE_VERTEX_AI=true` (default on Cloud Run) | Cloud Run service account (`roles/aiplatform.user`) |
 | **Gemini API (AI Studio)** | `USE_VERTEX_AI=false` **or** automatic fallback | `GEMINI_API_KEY` |
+| **OpenRouter** | `SUMMARIZATION_PROVIDER=openrouter` | `OPEN_ROUTER_API_KEY` (Cloud Run env; legacy: `OPENROUTER_API_KEY`) |
 
 ## Why summarization can fail (checklist)
 
@@ -45,6 +46,28 @@ bash scripts/create-gemini-api-key-and-secret.sh
 ```
 
 Optional: `DRY_RUN=1 bash scripts/create-gemini-api-key-and-secret.sh` to preview steps only.
+
+## OpenRouter (when Vertex / org policy blocks GCP Gemini)
+
+1. Create an [OpenRouter](https://openrouter.ai/) API key.
+2. Set it as an environment variable (**Cloud Run**: add env var `OPEN_ROUTER_API_KEY`; optional legacy name `OPENROUTER_API_KEY`).
+3. Configure the app:
+
+```bash
+export SUMMARIZATION_PROVIDER=openrouter
+export OPENROUTER_MODEL=google/gemini-3-flash-preview   # default; override if needed
+export OPEN_ROUTER_API_KEY="sk-or-v1-..."
+```
+
+4. **Connection test** from repo root:
+
+```bash
+PYTHONPATH=. python scripts/test_openrouter_connection.py
+```
+
+5. Run the app with the same env vars; `/health` will probe OpenRouter when `SUMMARIZATION_PROVIDER=openrouter`. Chat responses use `answer_source=openrouter`.
+
+---
 
 ## Local testing (real summarization)
 

@@ -9,3 +9,5 @@ opentelemetry-sdk==1.29.0
 opentelemetry-instrumentation-fastapi==0.50b0
 opentelemetry-exporter-otlp-proto-grpc==1.29.0
 httpx==0.28.1
+sqlalchemy==2.0.36
+google-cloud-storage==2.19.0

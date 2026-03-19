@@ -5,6 +5,23 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config import get_settings
+from app.database import configure_engine, init_db, reset_for_tests
+
+
+@pytest.fixture(autouse=True)
+def isolated_chat_sqlite(tmp_path, monkeypatch):
+    """Fresh SQLite DB per test for chat session persistence."""
+    monkeypatch.setenv("CHAT_SQLITE_PATH", str(tmp_path / "chat_test.sqlite3"))
+    monkeypatch.setenv("CHAT_SESSIONS_ENABLED", "true")
+    get_settings.cache_clear()
+    reset_for_tests()
+    configure_engine(get_settings())
+    init_db()
+    yield
+    get_settings.cache_clear()
+    reset_for_tests()
+
 
 @pytest.fixture
 def client():
@@ -46,6 +63,7 @@ def test_openapi_spec(client):
     spec = resp.json()
     assert spec["info"]["title"] == "FinChat – Financial News Assistant"
     assert "/api/chat" in spec["paths"]
+    assert "/api/sessions" in spec["paths"]
 
 
 def test_chat_missing_query(client):
@@ -63,6 +81,35 @@ def test_chat_success(mock_summarize, client):
     assert "sources" in data
     assert data["fallback_mode"] is False
     assert data.get("answer_source") == "gemini"
+    assert data.get("session_id")
+
+
+def test_chat_unknown_session_returns_404(client):
+    resp = client.post(
+        "/api/chat",
+        json={
+            "query": "What is Apple doing?",
+            "ticker": "AAPL",
+            "session_id": "00000000-0000-0000-0000-000000000000",
+        },
+    )
+    assert resp.status_code == 404
+
+
+@patch("app.main.summarize_news", return_value="Thread reply.")
+def test_session_create_and_messages(mock_summarize, client):
+    r = client.post("/api/sessions")
+    assert r.status_code == 200
+    sid = r.json()["session_id"]
+    r2 = client.post("/api/chat", json={"query": "Apple news?", "ticker": "AAPL", "session_id": sid})
+    assert r2.status_code == 200
+    r3 = client.get(f"/api/sessions/{sid}/messages")
+    assert r3.status_code == 200
+    body = r3.json()
+    assert body["session_id"] == sid
+    assert len(body["messages"]) >= 2
+    roles = [m["role"] for m in body["messages"]]
+    assert "user" in roles and "assistant" in roles
 
 
 @patch("app.main.summarize_news", side_effect=Exception("API error"))

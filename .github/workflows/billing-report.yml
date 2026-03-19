@@ -202,7 +202,7 @@ jobs:
               f.write("  Cloud Run   : 2M req/mo + 360,000 vCPU-sec free\n")
               f.write("  Artifact Reg: 0.5 GB storage free\n")
               f.write("  Secret Mgr  : 6 active secrets + 10K accesses free\n")
-              f.write("  Gemini API  : Free tier — 1,500 req/day (gemini-2.0-flash)\n")
+              f.write("  Gemini API  : Pricing/limits vary by model (gemini-3.1-flash-lite-preview)\n")
               f.write("\n")
               f.write("For exact cost breakdown, visit:\n")
               f.write("  https://console.cloud.google.com/billing\n")

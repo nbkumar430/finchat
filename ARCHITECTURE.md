@@ -40,13 +40,27 @@ when Vertex model IDs are unavailable or quotas differ. See [docs/AI_SUMMARIZATI
 | Module            | Responsibility                                      |
 |-------------------|-----------------------------------------------------|
 | `main.py`         | HTTP endpoints, middleware, lifespan management      |
-| `vertex_client.py`| Vertex AI Gemini integration for summarization       |
+| `vertex_client.py`| Summarization: Vertex AI, Gemini API, or **OpenRouter** |
+| `openrouter_client.py` | OpenRouter HTTP API (`OPEN_ROUTER_API_KEY` env) |
+
+**Cloud Run (OpenRouter):** set `OPEN_ROUTER_API_KEY`, `SUMMARIZATION_PROVIDER=openrouter`, and optional `OPENROUTER_MODEL` (default in code: `google/gemini-3-flash-preview`). CI uses `--update-env-vars` so console-set secrets/env merge with the deploy step.
 | `news_store.py`   | In-memory article index with keyword search          |
 | `schemas.py`      | Pydantic request/response models (OpenAPI/Swagger)   |
 | `metrics.py`      | Prometheus counters, histograms, gauges              |
 | `logging_config.py`| Structured JSON logging (Cloud Logging compatible)  |
 | `tracing.py`      | OpenTelemetry tracing + FastAPI instrumentation      |
 | `config.py`       | Env-based configuration via pydantic-settings        |
+| `orm_models.py`   | SQLAlchemy models: `chat_sessions`, `chat_messages`   |
+| `database.py`     | SQLite engine, `get_db` dependency, `init_db`           |
+| `chat_repository.py` | CRUD for sessions/messages                         |
+| `chat_storage_gcs.py` | Optional restore/backup of SQLite file to GCS     |
+
+#### Chat sessions (SQLite + optional GCS)
+
+- **Local / default**: SQLite file at `CHAT_SQLITE_PATH` (default `data/finchat_chat.sqlite3`). Each `/api/chat` call creates or continues a session and stores user + assistant rows.
+- **APIs**: `POST /api/sessions`, `GET /api/sessions/{id}/messages`, `POST /api/chat` with optional `session_id`; responses include `session_id` when persistence is enabled.
+- **Disable**: `CHAT_SESSIONS_ENABLED=false` (no DB; session APIs return 503).
+- **Disaster recovery / Cloud Run**: set `GCS_CHAT_DB_BUCKET`, `GCS_CHAT_DB_OBJECT`, `RESTORE_CHAT_DB_FROM_GCS=true` to download DB on startup; `BACKUP_CHAT_DB_ON_SHUTDOWN=true` uploads on shutdown (best-effort). Service account needs `storage.objectAdmin` (or narrower) on the bucket.
 
 ### 2. Grafana Dashboard (`grafana/`)
 
