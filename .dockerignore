@@ -1,0 +1,12 @@
+__pycache__
+*.pyc
+.git
+.github
+.env
+.env.*
+*.md
+tests/
+requirements-dev.txt
+.ruff_cache
+.pytest_cache
+grafana/
