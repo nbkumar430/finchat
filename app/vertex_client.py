@@ -23,13 +23,8 @@ def init_vertex() -> None:
     """Initialize Gemini AI client (API key or Vertex AI backend)."""
     global _client
     settings = get_settings()
-    if settings.gemini_api_key:
-        _client = genai.Client(api_key=settings.gemini_api_key)
-        logger.info(
-            "Gemini AI initialized with API key, model=%s",
-            settings.vertex_model,
-        )
-    else:
+    # Prefer Vertex AI runtime auth on Cloud Run to avoid Gemini API key quota limits.
+    if settings.use_vertex_ai:
         _client = genai.Client(
             vertexai=True,
             project=settings.gcp_project_id,
@@ -40,6 +35,16 @@ def init_vertex() -> None:
             settings.gcp_project_id,
             settings.gcp_region,
             settings.vertex_model,
+        )
+    elif settings.gemini_api_key:
+        _client = genai.Client(api_key=settings.gemini_api_key)
+        logger.info(
+            "Gemini AI initialized with API key, model=%s",
+            settings.vertex_model,
+        )
+    else:
+        raise RuntimeError(
+            "No AI backend configured. Set USE_VERTEX_AI=true (recommended) or provide GEMINI_API_KEY."
         )
 
 
@@ -72,7 +77,12 @@ def get_vertex_backend_status() -> str:
         _health_cache_ts = now
         return _health_cache_status
     except Exception as exc:
-        logger.warning("Vertex backend health probe failed: %s", exc)
+        logger.warning(
+            "Vertex backend health probe failed for model=%s backend=%s: %s",
+            get_settings().vertex_model,
+            "vertexai" if get_settings().use_vertex_ai else "apikey",
+            exc,
+        )
         _health_cache_status = "degraded"
         _health_cache_ts = now
         return _health_cache_status
@@ -148,7 +158,13 @@ Answer strictly and only from the articles above:"""
         elapsed = time.perf_counter() - start
         VERTEX_LATENCY.labels(model=settings.vertex_model).observe(elapsed)
         VERTEX_ERRORS.labels(model=settings.vertex_model, error_type=type(exc).__name__).inc()
-        logger.error("Gemini AI call failed: %s", exc, exc_info=True)
+        logger.error(
+            "Gemini AI call failed for model=%s backend=%s: %s",
+            settings.vertex_model,
+            "vertexai" if settings.use_vertex_ai else "apikey",
+            exc,
+            exc_info=True,
+        )
         _health_cache_status = "degraded"
         _health_cache_ts = time.time()
         raise
