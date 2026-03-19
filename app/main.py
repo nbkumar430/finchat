@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.config import get_settings
 from app.logging_config import setup_logging
@@ -218,9 +218,10 @@ async def chat(request: ChatRequest):
     # Search for relevant articles
     articles = news_store.search(query, ticker=ticker, max_results=5)
 
-    if not articles:
-        # Fallback: if ticker specified, get latest articles for that ticker
-        if ticker:
+    if not articles and ticker:
+
+
+        # Fallback: get latest articles for that ticker
             articles = news_store.get_by_ticker(ticker, limit=3)
 
     if not articles:
@@ -251,7 +252,7 @@ async def chat(request: ChatRequest):
         raise HTTPException(
             status_code=503,
             detail="AI summarization service is temporarily unavailable. Please try again.",
-        )
+        ) from exc
 
     sources = [
         ArticleRef(title=a.title, ticker=a.ticker, link=a.link)

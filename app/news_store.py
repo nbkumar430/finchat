@@ -6,7 +6,6 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from app.metrics import NEWS_ARTICLES_LOADED
 
@@ -58,7 +57,7 @@ class NewsStore:
     def search(
         self,
         query: str,
-        ticker: Optional[str] = None,
+        ticker: str | None = None,
         max_results: int = 5,
     ) -> list[Article]:
         """Search articles by keyword and optional ticker filter."""

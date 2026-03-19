@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -17,7 +15,7 @@ class ChatRequest(BaseModel):
         description="User's question about financial news",
         json_schema_extra={"example": "What is the latest news about Apple?"},
     )
-    ticker: Optional[str] = Field(
+    ticker: str | None = Field(
         None,
         description="Optional ticker symbol to filter news (e.g., AAPL, MSFT)",
         json_schema_extra={"example": "AAPL"},
@@ -40,7 +38,7 @@ class ChatResponse(BaseModel):
         default_factory=list,
         description="Source articles used for the answer",
     )
-    ticker_filter: Optional[str] = Field(
+    ticker_filter: str | None = Field(
         None,
         description="Ticker filter applied, if any",
     )
@@ -59,4 +57,4 @@ class ErrorResponse(BaseModel):
     """Standard error response."""
 
     error: str
-    detail: Optional[str] = None
+    detail: str | None = None

@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Optional
 
 import vertexai
 from vertexai.generative_models import GenerativeModel
 
 from app.config import get_settings
-from app.metrics import VERTEX_LATENCY, VERTEX_ERRORS
+from app.metrics import VERTEX_ERRORS, VERTEX_LATENCY
 
 logger = logging.getLogger(__name__)
 
-_model: Optional[GenerativeModel] = None
+_model: GenerativeModel | None = None
 
 
 def init_vertex() -> None:
