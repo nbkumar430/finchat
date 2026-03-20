@@ -51,9 +51,7 @@ def test_summarize_uses_api_fallback_after_vertex_failure(env_vertex, env_key, e
 
         calls: list[str] = []
 
-        def fake_generate(
-            client, model_candidates, prompt, query, context, settings, start, backend_label, **kwargs
-        ):
+        def fake_generate(client, model_candidates, prompt, query, context, settings, start, backend_label, **kwargs):
             calls.append(backend_label)
             if backend_label == "vertexai":
                 raise RuntimeError("404 NOT_FOUND Publisher Model")

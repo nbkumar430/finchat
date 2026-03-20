@@ -565,9 +565,7 @@ async def chat(
             try:
                 answer = await run_in_threadpool(build_extractive_answer, query, articles, ticker)
                 answer_source = "extractive"
-                summarization_attribution = (
-                    "Extractive TF-IDF · bundled JSON only (generative model unavailable)"
-                )
+                summarization_attribution = "Extractive TF-IDF · bundled JSON only (generative model unavailable)"
             except Exception as ex2:
                 logger.error("Extractive summarization failed: %s", ex2, exc_info=True)
                 answer = _build_headline_only_answer(query=query, sources=sources)
@@ -589,9 +587,7 @@ async def chat(
     response_model=SessionListResponse,
     tags=["Chat"],
     summary="List your chat threads",
-    description=(
-        "Most recently updated first. Admins see every user's sessions with ``owner_username`` set."
-    ),
+    description=("Most recently updated first. Admins see every user's sessions with ``owner_username`` set."),
 )
 async def list_chat_sessions_endpoint(
     user: Annotated[UserORM, Depends(get_current_user_for_persistence)],

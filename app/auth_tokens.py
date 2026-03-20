@@ -38,9 +38,7 @@ def create_auth_token(*, user_id: str, username: str, is_admin: bool, secret: st
         "adm": is_admin,
         "exp": int(time.time()) + max_age_seconds,
     }
-    body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()).decode(
-        "ascii"
-    )
+    body = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()).decode("ascii")
     body = body.rstrip("=")
     sig = hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).hexdigest()
     return f"{body}.{sig}"
