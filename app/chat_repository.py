@@ -103,6 +103,14 @@ def touch_session(db: Session, session_id: str) -> None:
         db.commit()
 
 
+def _derive_session_title(content: str, max_len: int = 72) -> str:
+    """First line of the user's message, truncated for sidebar display."""
+    line = (content or "").strip().split("\n", 1)[0].strip()
+    if len(line) > max_len:
+        return line[: max_len - 1].rstrip() + "…"
+    return line or "Chat"
+
+
 def append_message(
     db: Session,
     *,
@@ -136,6 +144,8 @@ def append_message(
     sess = get_session(db, session_id)
     if sess:
         sess.updated_at = _utcnow()
+        if role == "user" and not (sess.title or "").strip():
+            sess.title = _derive_session_title(content)
     db.commit()
     db.refresh(msg)
     return msg

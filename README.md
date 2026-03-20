@@ -85,7 +85,23 @@ This appears when **`GF_SECURITY_ADMIN_PASSWORD`** (or **`GF_SECURITY_ADMIN_USER
 
    Then re-run the GitHub workflow (or `gcloud run deploy …` with `--set-env-vars` as in CI).
 
-2. **Keep Secret Manager (production):** do **not** pass those vars as literals in deploy. Remove `GF_SECURITY_ADMIN_PASSWORD` / `GF_SECURITY_ADMIN_USER` from the workflow’s `--set-env-vars`, and set them only via **`--set-secrets`** or the Cloud Console, with IA M as in the section above.
+2. **Keep Secret Manager (production):** do **not** pass those vars as literals in deploy. Remove `GF_SECURITY_ADMIN_PASSWORD` / `GF_SECURITY_ADMIN_USER` from the workflow’s `--set-env-vars`, and set them only via **`--set-secrets`** or the Cloud Console, with IAM as in the section above.
+
+### App: same “different type” for traceability URLs
+
+If **`GRAFANA_PUBLIC_URL`** or **`FINCHAT_APP_PUBLIC_URL`** on **`finchat-app`** were wired from Secret Manager, CI’s literal `--update-env-vars` step can fail the same way. The workflow clears those secret bindings (`--clear-secrets`) before setting literals; if you update by hand:
+
+```bash
+export PROJECT_ID=your-project REGION=us-central1 APP=finchat-app
+gcloud run services update "$APP" --project "$PROJECT_ID" --region "$REGION" \
+  --clear-secrets GRAFANA_PUBLIC_URL \
+  --clear-secrets FINCHAT_APP_PUBLIC_URL
+# then set plain env vars in console or --update-env-vars
+```
+
+### Thread ledger (saved chats)
+
+After you **sign in**, the sidebar **Thread ledger** lists your **server-stored** chat threads (newest first). Each row uses a short title derived from your first question; open a row to continue that conversation. Guests see a sign-in prompt unless the server allows guest chat without persistence.
 
 ## Public URLs
 

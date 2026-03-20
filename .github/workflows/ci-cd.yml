@@ -202,7 +202,15 @@ jobs:
             --region ${{ env.REGION }} \
             --update-env-vars "GF_SERVER_ROOT_URL=${GRAFANA_ROOT},FINCHAT_APP_BASE_URL=${APP_URL}"
 
+          # Same type conflict as Grafana: if these were secret refs, literal --update-env-vars fails without clearing.
           gcloud run services update ${{ env.APP_SERVICE }} \
+            --project ${{ env.PROJECT_ID }} \
+            --region ${{ env.REGION }} \
+            --clear-secrets GRAFANA_PUBLIC_URL \
+            --clear-secrets FINCHAT_APP_PUBLIC_URL || true
+
+          gcloud run services update ${{ env.APP_SERVICE }} \
+            --project ${{ env.PROJECT_ID }} \
             --region ${{ env.REGION }} \
             --update-env-vars "GRAFANA_PUBLIC_URL=${GRAFANA_URL},FINCHAT_APP_PUBLIC_URL=${APP_URL}"
 
