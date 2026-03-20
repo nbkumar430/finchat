@@ -9,6 +9,14 @@ from app.config import get_settings
 from app.database import configure_engine, init_db, reset_for_tests
 
 
+def _no_gcs_chat_db(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Org/repo CI may define GCS chat DB — never restore prod SQLite during pytest."""
+    monkeypatch.setenv("GCS_CHAT_DB_BUCKET", "")
+    monkeypatch.setenv("GCS_CHAT_DB_OBJECT", "")
+    monkeypatch.setenv("RESTORE_CHAT_DB_FROM_GCS", "false")
+    monkeypatch.setenv("BACKUP_CHAT_DB_ON_SHUTDOWN", "false")
+
+
 @pytest.fixture(autouse=True)
 def isolated_chat_sqlite(tmp_path, monkeypatch):
     """Fresh SQLite DB per test for chat session persistence."""
@@ -18,6 +26,7 @@ def isolated_chat_sqlite(tmp_path, monkeypatch):
     # CI may set ADMIN_INITIAL_PASSCODE to a prod secret; tests always seed admin/admin.
     monkeypatch.setenv("ADMIN_INITIAL_PASSCODE", "admin")
     monkeypatch.setenv("FINCHAT_AUTH_SECRET", "test-finchat-auth-secret-not-for-production")
+    _no_gcs_chat_db(monkeypatch)
     get_settings.cache_clear()
     reset_for_tests()
     configure_engine(get_settings())
@@ -249,6 +258,9 @@ def test_guest_chat_without_login_no_session_id(tmp_path, monkeypatch):
     monkeypatch.setenv("CHAT_SQLITE_PATH", str(tmp_path / "guest.sqlite"))
     monkeypatch.setenv("CHAT_SESSIONS_ENABLED", "true")
     monkeypatch.setenv("FINCHAT_REQUIRE_AUTH", "false")
+    monkeypatch.setenv("ADMIN_INITIAL_PASSCODE", "admin")
+    monkeypatch.setenv("FINCHAT_AUTH_SECRET", "test-finchat-auth-secret-not-for-production")
+    _no_gcs_chat_db(monkeypatch)
     get_settings.cache_clear()
     reset_for_tests()
     configure_engine(get_settings())
@@ -274,6 +286,9 @@ def test_chat_requires_login_when_require_auth_no_cookie(tmp_path, monkeypatch):
     monkeypatch.setenv("CHAT_SQLITE_PATH", str(tmp_path / "strict.sqlite"))
     monkeypatch.setenv("CHAT_SESSIONS_ENABLED", "true")
     monkeypatch.setenv("FINCHAT_REQUIRE_AUTH", "true")
+    monkeypatch.setenv("ADMIN_INITIAL_PASSCODE", "admin")
+    monkeypatch.setenv("FINCHAT_AUTH_SECRET", "test-finchat-auth-secret-not-for-production")
+    _no_gcs_chat_db(monkeypatch)
     get_settings.cache_clear()
     reset_for_tests()
     configure_engine(get_settings())
