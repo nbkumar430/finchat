@@ -69,11 +69,14 @@ Browser errors like “Grafana has failed to load its application files” on th
 
 ## Public URLs
 
-After deployment, fetch service URLs:
+Deployed hostnames are **per project/region** (not fixed in the repo). After a successful GitHub Actions deploy on `main`, open the workflow run → **Deployment Summary** for the resolved **App URL** and **Grafana URL**.
+
+Or fetch with gCloud:
 
 ```bash
-gcloud run services describe finchat-app --region us-central1 --format='value(status.url)'
-gcloud run services describe finchat-grafana --region us-central1 --format='value(status.url)'
+export REGION=us-central1   # match your CI REGION
+gcloud run services describe finchat-app --region "$REGION" --format='value(status.url)'
+gcloud run services describe finchat-grafana --region "$REGION" --format='value(status.url)'
 ```
 
 - Chat app: `<APP_URL>/`

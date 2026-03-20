@@ -12,6 +12,7 @@ from typing import Optional
 from google import genai
 from google.genai import types
 
+from app.answer_normalization import normalize_llm_answer_to_prose
 from app.config import Settings, get_settings
 from app.metrics import VERTEX_ERRORS, VERTEX_LATENCY
 
@@ -193,15 +194,16 @@ def _generate_summary_with_client(
                 _record_success()
                 _set_active_model(candidate)
                 _set_active_backend(backend_label)
+                normalized = normalize_llm_answer_to_prose(response.text)
                 _cache_put(
                     _cache_key(
                         query=query,
                         context=context,
                         model=f"{backend_label}:{candidate}:{prompt_style}",
                     ),
-                    response.text,
+                    normalized,
                 )
-                return response.text
+                return normalized
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
                 if _is_not_found_error(exc):
@@ -396,16 +398,22 @@ RULES:
 5. No investment advice, buy/sell/hold, or price predictions.
 6. If the question is outside these tickers or unrelated to the excerpts, say you are out of scope for uncovered names.
 
-INSUFFICIENT DATA — reply with this EXACT sentence only (so FinChat can escalate), with no extra words:
+INSUFFICIENT DATA — reply with this EXACT sentence only (so FinChat can escalate), with no extra words, no JSON:
 The provided news articles do not contain enough information to answer this question.
 
---- BUNDLED NEWS ARTICLES (JSON) ---
+OUTPUT FORMAT (critical):
+- Write a **plain-language summary** for the user: short paragraphs and/or bullet points.
+- **Do not** return JSON, YAML, or code fences. **Do not** echo the raw article blocks.
+- Ground every factual claim in the excerpts; name the article by **title** when citing.
+- End with a section titled **References**: list each cited article as a bullet with title and the **Source URL** on the next line (plain text, not JSON).
+
+--- BUNDLED NEWS ARTICLES (dataset for your eyes only; do not paste this JSON back to the user) ---
 {context}
 --- END ARTICLES ---
 
 User question: {query}
 
-Answer (JSON sources only):"""
+Summary for the user:"""
 
 
 def _build_finchat_prompt_general_supplement(query: str, context: str) -> str:
@@ -421,14 +429,15 @@ REQUIREMENTS:
 - Start with a short note: label which parts come from **bundled JSON** vs **general knowledge** (one line each is enough).
 - No investment advice or price targets.
 - Be concise and factual.
+- **Plain language only** — no JSON objects, no code fences, no YAML.
 
---- BUNDLED EXCERPTS (JSON, optional) ---
+--- BUNDLED EXCERPTS (dataset for grounding; do not paste raw JSON to the user) ---
 {excerpt}
 --- END EXCERPTS ---
 
 User question: {query}
 
-Answer:"""
+Summary for the user:"""
 
 
 def _build_finchat_user_message(query: str, context: str, prompt_style: str) -> str:
@@ -509,7 +518,7 @@ def _summarize_news_openrouter(query: str, context: str, *, prompt_style: str = 
     cached_answer = _cache_get(cache_key)
     if cached_answer is not None:
         logger.info("OpenRouter cache hit model=%s style=%s", model_label, prompt_style)
-        return cached_answer
+        return normalize_llm_answer_to_prose(cached_answer)
 
     prompt = _build_finchat_user_message(query, context, prompt_style)
     start = time.perf_counter()
@@ -521,6 +530,7 @@ def _summarize_news_openrouter(query: str, context: str, *, prompt_style: str = 
         raise RuntimeError("AI backend busy; too many concurrent requests.")
     try:
         text = openrouter_complete_user_prompt(settings, prompt)
+        normalized = normalize_llm_answer_to_prose(text)
         elapsed = time.perf_counter() - start
         VERTEX_LATENCY.labels(model=model_label).observe(elapsed)
         _health_cache_status = "up"
@@ -528,14 +538,14 @@ def _summarize_news_openrouter(query: str, context: str, *, prompt_style: str = 
         _record_success()
         _set_active_model(model_label)
         _set_active_backend("openrouter")
-        _cache_put(cache_key, text)
+        _cache_put(cache_key, normalized)
         logger.info(
             "OpenRouter response model=%s in %.2fs",
             model_label,
             elapsed,
             extra={"latency_ms": elapsed * 1000},
         )
-        return text
+        return normalized
     except Exception as exc:  # noqa: BLE001
         elapsed = time.perf_counter() - start
         VERTEX_LATENCY.labels(model=model_label).observe(elapsed)
@@ -579,7 +589,7 @@ def summarize_news(query: str, context: str, *, prompt_style: str = "json_strict
     cached_answer = _cache_get(cache_key)
     if cached_answer is not None:
         logger.info("Gemini cache hit for model=%s style=%s", model, prompt_style)
-        return cached_answer
+        return normalize_llm_answer_to_prose(cached_answer)
 
     prompt = _build_finchat_user_message(query, context, prompt_style)
 

@@ -394,16 +394,29 @@
     text-decoration: underline;
     color: var(--secondary);
   }
-  .message.bot .attribution {
+  .message.bot .attribution-details {
     margin-top: var(--spacing-6);
     padding-top: var(--spacing-6);
     font-size: 0.78rem;
     color: var(--on-surface-variant);
     line-height: 1.5;
+    border-top: 1px solid var(--ghost-border);
   }
-  .message.bot .attribution strong {
-    color: var(--on-surface);
+  .message.bot .attribution-details summary {
+    cursor: pointer;
     font-family: var(--font-display);
+    font-weight: 600;
+    color: var(--on-surface);
+    list-style: none;
+  }
+  .message.bot .attribution-details summary::-webkit-details-marker { display: none; }
+  .message.bot .attribution-body {
+    margin-top: 0.5rem;
+    padding: 0.5rem 0 0;
+  }
+  .message.bot strong.inline-md {
+    color: var(--on-surface);
+    font-weight: 700;
   }
 
   .ticker-tag {
@@ -814,6 +827,11 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+/** Safe **bold** from model prose (no HTML). */
+function formatProseBold(escaped) {
+  return escaped.replace(/\*\*(.+?)\*\*/g, '<strong class="inline-md">$1</strong>');
+}
+
 function setAdminUi(isAdmin) {
   document.body.classList.toggle('admin-mode', !!isAdmin);
   document.getElementById('adminCapBadge').style.display = isAdmin ? 'inline' : 'none';
@@ -827,9 +845,9 @@ function addMessage(text, role, sources, attribution) {
   const div = document.createElement('div');
   div.className = `message ${role}`;
   if (role === 'bot') {
-    let html = escapeHtml(text).replace(/\n/g, '<br>');
+    let html = formatProseBold(escapeHtml(text)).replace(/\n/g, '<br>');
     if (sources && sources.length) {
-      html += '<div class="sources"><strong>Sources</strong><br>';
+      html += '<div class="sources"><strong>Article references</strong><br>';
       sources.forEach(s => {
         html += `<span class="ticker-tag">${escapeHtml(s.ticker)}</span> `;
         html += `<a href="${escapeHtml(s.link)}" target="_blank" rel="noopener">${escapeHtml(s.title)}</a><br>`;
@@ -837,7 +855,7 @@ function addMessage(text, role, sources, attribution) {
       html += '</div>';
     }
     if (attribution) {
-      html += `<div class="attribution"><strong>How this was produced</strong><br>${escapeHtml(attribution)}</div>`;
+      html += `<details class="attribution-details"><summary>Model &amp; grounding details</summary><div class="attribution-body">${escapeHtml(attribution).replace(/\n/g, '<br>')}</div></details>`;
     }
     div.innerHTML = html;
   } else div.textContent = text;

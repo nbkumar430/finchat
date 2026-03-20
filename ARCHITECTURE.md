@@ -47,6 +47,7 @@ summarization escalates to a *general supplement* path. API responses and the we
 |-------------------|-----------------------------------------------------|
 | `main.py`         | HTTP endpoints, middleware, lifespan management      |
 | `vertex_client.py`| Summarization: Vertex AI, Gemini API, or **OpenRouter** |
+| `answer_normalization.py` | Strips JSON/code-fence model output → plain prose + reference lines for the chat UI |
 | `openrouter_client.py` | OpenRouter HTTP API (`OPEN_ROUTER_API_KEY` env) |
 
 **Cloud Run (OpenRouter):** set `OPEN_ROUTER_API_KEY`, `SUMMARIZATION_PROVIDER=openrouter`, and optional `OPENROUTER_MODEL` (default in code: `google/gemini-3-flash-preview`). CI uses `--update-env-vars` so console-set secrets/env merge with the deploy step.
