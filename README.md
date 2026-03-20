@@ -67,6 +67,26 @@ Replace `PROJECT_ID` with your project (e.g. `project-ede0958a-eb5c-4225-94d`). 
 
 Browser errors like “Grafana has failed to load its application files” on the Cloud Run URL often clear once the service revision is **Ready** and serving; fix IAM first, then redeploy.
 
+### Grafana: “Cannot update environment variable … different type”
+
+This appears when **`GF_SECURITY_ADMIN_PASSWORD`** (or **`GF_SECURITY_ADMIN_USER`**) is already wired as a **Secret Manager** value on Cloud Run, but **`gcloud run deploy --set-env-vars`** tries to set a **plain string** (e.g. CI `admin` / `admin`). A variable cannot be both types.
+
+**Fix (pick one path):**
+
+1. **Use CI/plain literals again (prototype):** clear the secret bindings, then redeploy.
+
+   ```bash
+   export PROJECT_ID=your-project REGION=us-central1 SERVICE=finchat-grafana
+   gcloud run services update "$SERVICE" --project "$PROJECT_ID" --region "$REGION" \
+     --clear-secrets GF_SECURITY_ADMIN_PASSWORD \
+     --clear-secrets GF_SECURITY_ADMIN_USER
+   ```
+   (Omit either `--clear-secrets` line if only one variable was secret-backed.)
+
+   Then re-run the GitHub workflow (or `gcloud run deploy …` with `--set-env-vars` as in CI).
+
+2. **Keep Secret Manager (production):** do **not** pass those vars as literals in deploy. Remove `GF_SECURITY_ADMIN_PASSWORD` / `GF_SECURITY_ADMIN_USER` from the workflow’s `--set-env-vars`, and set them only via **`--set-secrets`** or the Cloud Console, with IA M as in the section above.
+
 ## Public URLs
 
 Deployed hostnames are **per project/region** (not fixed in the repo). After a successful GitHub Actions deploy on `main`, open the workflow run → **Deployment Summary** for the resolved **App URL** and **Grafana URL**.

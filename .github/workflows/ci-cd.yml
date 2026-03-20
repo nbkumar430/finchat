@@ -170,6 +170,15 @@ jobs:
           APP_URL="${{ steps.deploy_app.outputs.app_url }}"
           IMG="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.GRAFANA_IMAGE }}:${{ github.sha }}"
 
+          # If these were previously set from Secret Manager, plain --set-env-vars fails until cleared.
+          if gcloud run services describe ${{ env.GRAFANA_SERVICE }} --region ${{ env.REGION }} --project ${{ env.PROJECT_ID }} &>/dev/null; then
+            gcloud run services update ${{ env.GRAFANA_SERVICE }} \
+              --project ${{ env.PROJECT_ID }} \
+              --region ${{ env.REGION }} \
+              --clear-secrets GF_SECURITY_ADMIN_PASSWORD \
+              --clear-secrets GF_SECURITY_ADMIN_USER || true
+          fi
+
           gcloud run deploy ${{ env.GRAFANA_SERVICE }} \
             --image "$IMG" \
             --region ${{ env.REGION }} \
