@@ -78,10 +78,9 @@ This appears when **`GF_SECURITY_ADMIN_PASSWORD`** (or **`GF_SECURITY_ADMIN_USER
    ```bash
    export PROJECT_ID=your-project REGION=us-central1 SERVICE=finchat-grafana
    gcloud run services update "$SERVICE" --project "$PROJECT_ID" --region "$REGION" \
-     --clear-secrets GF_SECURITY_ADMIN_PASSWORD \
-     --clear-secrets GF_SECURITY_ADMIN_USER
+     --remove-secrets=GF_SECURITY_ADMIN_PASSWORD,GF_SECURITY_ADMIN_USER
    ```
-   (Omit either `--clear-secrets` line if only one variable was secret-backed.)
+   (`--clear-secrets` removes **all** secrets and takes **no** variable name; use `--remove-secrets=KEY,...` for specific keys. Then redeploy or `--update-env-vars` with literals.)
 
    Then re-run the GitHub workflow (or `gcloud run deploy …` with `--set-env-vars` as in CI).
 
@@ -89,13 +88,12 @@ This appears when **`GF_SECURITY_ADMIN_PASSWORD`** (or **`GF_SECURITY_ADMIN_USER
 
 ### App: same “different type” for traceability URLs
 
-If **`GRAFANA_PUBLIC_URL`** or **`FINCHAT_APP_PUBLIC_URL`** on **`finchat-app`** were wired from Secret Manager, CI’s literal `--update-env-vars` step can fail the same way. The workflow clears those secret bindings (`--clear-secrets`) before setting literals; if you update by hand:
+If **`GRAFANA_PUBLIC_URL`** or **`FINCHAT_APP_PUBLIC_URL`** on **`finchat-app`** were wired from Secret Manager, CI’s literal `--update-env-vars` step can fail the same way. The workflow drops those secret bindings (`--remove-secrets=…`) before setting literals; if you update by hand:
 
 ```bash
 export PROJECT_ID=your-project REGION=us-central1 APP=finchat-app
 gcloud run services update "$APP" --project "$PROJECT_ID" --region "$REGION" \
-  --clear-secrets GRAFANA_PUBLIC_URL \
-  --clear-secrets FINCHAT_APP_PUBLIC_URL
+  --remove-secrets=GRAFANA_PUBLIC_URL,FINCHAT_APP_PUBLIC_URL
 # then set plain env vars in console or --update-env-vars
 ```
 

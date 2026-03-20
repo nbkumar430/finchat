@@ -170,16 +170,17 @@ jobs:
           APP_URL="${{ steps.deploy_app.outputs.app_url }}"
           IMG="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.GRAFANA_IMAGE }}:${{ github.sha }}"
 
-          # If these were previously set from Secret Manager, plain --set-env-vars fails until cleared.
+          # GF_* were Secret Manager refs, gcloud run deploy cannot switch them to literals in one step.
+          # Use --remove-secrets=KEY,... (not --clear-secrets NAME — that flag takes no args).
           if gcloud run services describe ${{ env.GRAFANA_SERVICE }} --region ${{ env.REGION }} --project ${{ env.PROJECT_ID }} &>/dev/null; then
             gcloud run services update ${{ env.GRAFANA_SERVICE }} \
               --project ${{ env.PROJECT_ID }} \
               --region ${{ env.REGION }} \
-              --clear-secrets GF_SECURITY_ADMIN_PASSWORD \
-              --clear-secrets GF_SECURITY_ADMIN_USER || true
+              --remove-secrets=GF_SECURITY_ADMIN_PASSWORD,GF_SECURITY_ADMIN_USER || true
           fi
 
           gcloud run deploy ${{ env.GRAFANA_SERVICE }} \
+            --project ${{ env.PROJECT_ID }} \
             --image "$IMG" \
             --region ${{ env.REGION }} \
             --platform managed \
@@ -194,20 +195,20 @@ jobs:
             --service-account ${{ env.APP_RUNTIME_SA }} \
             --set-env-vars "FINCHAT_APP_BASE_URL=${APP_URL},GF_SECURITY_ADMIN_USER=admin,GF_SECURITY_ADMIN_PASSWORD=admin"
 
-          GRAFANA_URL=$(gcloud run services describe ${{ env.GRAFANA_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')
+          GRAFANA_URL=$(gcloud run services describe ${{ env.GRAFANA_SERVICE }} --region ${{ env.REGION }} --project ${{ env.PROJECT_ID }} --format 'value(status.url)')
           GRAFANA_ROOT="${GRAFANA_URL%/}/"
           echo "Grafana URL: ${GRAFANA_URL} (GF_SERVER_ROOT_URL=${GRAFANA_ROOT})"
 
           gcloud run services update ${{ env.GRAFANA_SERVICE }} \
+            --project ${{ env.PROJECT_ID }} \
             --region ${{ env.REGION }} \
             --update-env-vars "GF_SERVER_ROOT_URL=${GRAFANA_ROOT},FINCHAT_APP_BASE_URL=${APP_URL}"
 
-          # Same type conflict as Grafana: if these were secret refs, literal --update-env-vars fails without clearing.
+          # Same type conflict: drop secret refs before literal --update-env-vars.
           gcloud run services update ${{ env.APP_SERVICE }} \
             --project ${{ env.PROJECT_ID }} \
             --region ${{ env.REGION }} \
-            --clear-secrets GRAFANA_PUBLIC_URL \
-            --clear-secrets FINCHAT_APP_PUBLIC_URL || true
+            --remove-secrets=GRAFANA_PUBLIC_URL,FINCHAT_APP_PUBLIC_URL || true
 
           gcloud run services update ${{ env.APP_SERVICE }} \
             --project ${{ env.PROJECT_ID }} \
