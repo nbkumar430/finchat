@@ -101,7 +101,6 @@ _STOPWORDS = frozenset(
         "very",
         "just",
         "about",
-        "into",
         "news",
         "latest",
         "tell",
@@ -113,7 +112,6 @@ _STOPWORDS = frozenset(
         "summarize",
         "please",
         "can",
-        "could",
     }
 )
 
@@ -215,10 +213,7 @@ class NewsStore:
             # Global search (no ticker): require a real keyword hit — title-only similarity
             # is too noisy vs unrelated long questions. Scoped ticker search still allows
             # high title similarity when the user paraphrases the headline.
-            if ticker:
-                meaningful = kw_hit or title_sim >= title_sim_meaningful
-            else:
-                meaningful = kw_hit
+            meaningful = (kw_hit or title_sim >= title_sim_meaningful) if ticker else kw_hit
 
             if not meaningful:
                 continue
