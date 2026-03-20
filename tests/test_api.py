@@ -17,6 +17,28 @@ def _no_gcs_chat_db(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BACKUP_CHAT_DB_ON_SHUTDOWN", "false")
 
 
+def _ensure_test_admin_passcode(passcode: str = "admin") -> None:
+    """Run after TestClient lifespan: guarantee admin exists with a known passcode.
+
+    CI may still restore an SQLite file whose ``admin`` row used a different secret;
+    ``seed_default_admin`` skips when the user already exists, so login would 401.
+    """
+    from app import chat_repository
+    from app.auth_tokens import hash_passcode
+    from app.database import SessionLocal
+
+    if SessionLocal is None:
+        return
+    with SessionLocal() as db:
+        user = chat_repository.get_user_by_username(db, "admin")
+        if user is None:
+            chat_repository.create_user(db, username="admin", passcode=passcode, is_admin=True)
+        else:
+            user.password_hash = hash_passcode(passcode)
+            db.add(user)
+            db.commit()
+
+
 @pytest.fixture(autouse=True)
 def isolated_chat_sqlite(tmp_path, monkeypatch):
     """Fresh SQLite DB per test for chat session persistence."""
@@ -43,6 +65,7 @@ def client():
         from app.main import app
 
         with TestClient(app) as c:
+            _ensure_test_admin_passcode("admin")
             login = c.post(
                 "/api/auth/login",
                 json={"username": "admin", "passcode": "admin"},
