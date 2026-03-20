@@ -15,6 +15,9 @@ def isolated_chat_sqlite(tmp_path, monkeypatch):
     monkeypatch.setenv("CHAT_SQLITE_PATH", str(tmp_path / "chat_test.sqlite3"))
     monkeypatch.setenv("CHAT_SESSIONS_ENABLED", "true")
     monkeypatch.setenv("FINCHAT_REQUIRE_AUTH", "true")
+    # CI may set ADMIN_INITIAL_PASSCODE to a prod secret; tests always seed admin/admin.
+    monkeypatch.setenv("ADMIN_INITIAL_PASSCODE", "admin")
+    monkeypatch.setenv("FINCHAT_AUTH_SECRET", "test-finchat-auth-secret-not-for-production")
     get_settings.cache_clear()
     reset_for_tests()
     configure_engine(get_settings())
