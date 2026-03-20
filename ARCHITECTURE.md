@@ -74,6 +74,8 @@ The Cloud Run Grafana image runs a **local Prometheus sidecar** (started by `gra
 
 After deploy, CI sets **`GF_SERVER_ROOT_URL`** to the Grafana service URL so static assets load correctly (avoids “failed to load application files”). The FinChat app receives **`GRAFANA_PUBLIC_URL`** and **`FINCHAT_APP_PUBLIC_URL`** for **admin traceability** links in the UI (`GET /api/admin/traceability`).
 
+**Prototype:** Grafana uses standard UI login with **`admin` / `admin`** (set by CI/CD env vars). For production, use a strong password and Secret Manager — never ship default creds on a public URL.
+
 Pre-provisioned dashboard covering the **Four Golden Signals**:
 
 | Signal      | Metric(s)                                          | Panel Type  |

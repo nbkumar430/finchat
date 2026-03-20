@@ -14,10 +14,11 @@ COPY provisioning/ /etc/grafana/provisioning/
 COPY dashboards/ /var/lib/grafana/dashboards/
 
 # Sidecar Prometheus listens here; datasource uses this URL.
+# Prototype defaults (override in Cloud Run for production): Grafana UI login admin / admin.
 ENV GF_SERVER_HTTP_PORT=3000 \
+    GF_SECURITY_ADMIN_USER=admin \
     GF_SECURITY_ADMIN_PASSWORD=admin \
-    GF_AUTH_ANONYMOUS_ENABLED=true \
-    GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer \
+    GF_AUTH_ANONYMOUS_ENABLED=false \
     GF_SECURITY_ALLOW_EMBEDDING=true \
     GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s/ \
     GF_LOG_LEVEL=warn

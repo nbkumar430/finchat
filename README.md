@@ -34,17 +34,17 @@ Push to `main` triggers the CI/CD pipeline: lint → test → build → deploy t
 Required GitHub Secrets:
 - `WIF_PROVIDER`: Workload Identity Federation provider resource name
 - `WIF_SA_EMAIL`: Service account email for deployments
-- `GRAFANA_ADMIN_PASSWORD` (recommended): Used to deploy Grafana when GCP Secret Manager is missing **or** when `finchat-app-sa` cannot read `GRAFANA_ADMIN_PASSWORD` in Secret Manager (CI retries automatically).
 - `BILLING_EXPORT_TABLE` (optional): BigQuery billing export table as `project.dataset.table`
 - `SENDGRID_API_KEY` (optional): for daily billing email delivery
 
-Runtime credentials are fetched from Secret Manager (not GitHub secrets):
+Runtime credentials are fetched from Secret Manager (not GitHub secrets) where applicable:
 - `GEMINI_API_KEY`
-- `GRAFANA_ADMIN_PASSWORD`
 
-### Grafana Cloud Run: “Permission denied on secret … GRAFANA_ADMIN_PASSWORD”
+**Grafana (prototype):** CI sets **`admin` / `admin`** on Cloud Run — no Grafana secret required. For production, change `GF_SECURITY_ADMIN_PASSWORD` (and user if needed) on the `finchat-grafana` service.
 
-The **`finchat-app-sa`** service account must be able to read the secret at runtime (`roles/secretmanager.secretAccessor`). If the revision fails with that error, apply one of the following (as a project Owner or Security Admin):
+### Grafana Cloud Run: Secret Manager (optional / production hardening)
+
+If you configure Grafana to use **`GF_SECURITY_ADMIN_PASSWORD`** from Secret Manager instead of the prototype defaults, **`finchat-app-sa`** must have **`roles/secretmanager.secretAccessor`** on that secret (or the project). If the revision fails with permission denied:
 
 **Option A — project-wide (matches `scripts/setup-gcp.sh`):**
 
@@ -78,7 +78,7 @@ gcloud run services describe finchat-grafana --region us-central1 --format='valu
 
 - Chat app: `<APP_URL>/`
 - Swagger UI: `<APP_URL>/docs`
-- Grafana: `<GRAFANA_URL>/`
+- Grafana: `<GRAFANA_URL>/` — sign in with **`admin` / `admin`** (prototype defaults from CI; change for production).
 
 The CI/CD workflow also publishes these links automatically in the GitHub Actions
 run summary after a successful deployment, along with smoke-test results.

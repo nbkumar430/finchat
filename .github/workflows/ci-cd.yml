@@ -132,68 +132,29 @@ jobs:
           curl -fsSL "${APP_URL}/health" > /tmp/app-health-pre-grafana.json
           curl -fsSL "${APP_URL}/openapi.json" > /tmp/openapi-pre-grafana.json
 
-      # Deploy Grafana to Cloud Run (service 2 only after app success)
-      # Prefer Secret Manager when the secret exists; if deploy fails (common: finchat-app-sa lacks
-      # secretAccessor), retry using GitHub Actions secret so Grafana still ships.
+      # Deploy Grafana to Cloud Run (prototype: admin / admin — no Secret Manager required)
       - name: Deploy Grafana to Cloud Run
         id: deploy_grafana
         continue-on-error: true
-        env:
-          GH_GRAFANA_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
         run: |
           set -euo pipefail
           APP_URL="${{ steps.deploy_app.outputs.app_url }}"
           IMG="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.GRAFANA_IMAGE }}:${{ github.sha }}"
 
-          deploy_with_sm_secret() {
-            gcloud run deploy ${{ env.GRAFANA_SERVICE }} \
-              --image "$IMG" \
-              --region ${{ env.REGION }} \
-              --platform managed \
-              --allow-unauthenticated \
-              --port 3000 \
-              --memory 1Gi \
-              --cpu 1 \
-              --timeout 300 \
-              --min-instances 0 \
-              --max-instances 2 \
-              --service-account ${{ env.APP_RUNTIME_SA }} \
-              --set-env-vars "FINCHAT_APP_BASE_URL=${APP_URL}" \
-              --set-secrets "GF_SECURITY_ADMIN_PASSWORD=GRAFANA_ADMIN_PASSWORD:latest"
-          }
-
-          deploy_with_gh_secret() {
-            if [[ -z "${GH_GRAFANA_PASSWORD:-}" ]]; then
-              echo "::error::Set repository secret GRAFANA_ADMIN_PASSWORD (or fix GCP Secret Manager IAM for finchat-app-sa)."
-              return 1
-            fi
-            gcloud run deploy ${{ env.GRAFANA_SERVICE }} \
-              --image "$IMG" \
-              --region ${{ env.REGION }} \
-              --platform managed \
-              --allow-unauthenticated \
-              --port 3000 \
-              --memory 1Gi \
-              --cpu 1 \
-              --timeout 300 \
-              --min-instances 0 \
-              --max-instances 2 \
-              --service-account ${{ env.APP_RUNTIME_SA }} \
-              --set-env-vars "FINCHAT_APP_BASE_URL=${APP_URL},GF_SECURITY_ADMIN_PASSWORD=${GH_GRAFANA_PASSWORD}"
-          }
-
-          if gcloud secrets describe GRAFANA_ADMIN_PASSWORD --project="${{ env.PROJECT_ID }}" >/dev/null 2>&1; then
-            echo "GCP secret GRAFANA_ADMIN_PASSWORD exists; attempting deploy with Secret Manager..."
-            if deploy_with_sm_secret; then
-              echo "Grafana deploy OK (Secret Manager)."
-            else
-              echo "::warning::Secret Manager deploy failed (often roles/secretmanager.secretAccessor for finchat-app-sa). Retrying with GitHub secret..."
-              deploy_with_gh_secret
-            fi
-          else
-            echo "No GCP secret; deploying with GitHub Actions secret only."
-            deploy_with_gh_secret
-          fi
+          # Plaintext prototype credentials (change before any non-demo deployment).
+          gcloud run deploy ${{ env.GRAFANA_SERVICE }} \
+            --image "$IMG" \
+            --region ${{ env.REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 3000 \
+            --memory 1Gi \
+            --cpu 1 \
+            --timeout 300 \
+            --min-instances 0 \
+            --max-instances 2 \
+            --service-account ${{ env.APP_RUNTIME_SA }} \
+            --set-env-vars "FINCHAT_APP_BASE_URL=${APP_URL},GF_SECURITY_ADMIN_USER=admin,GF_SECURITY_ADMIN_PASSWORD=admin"
 
           GRAFANA_URL=$(gcloud run services describe ${{ env.GRAFANA_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')
           echo "grafana_url=${GRAFANA_URL}" >> "$GITHUB_OUTPUT"
