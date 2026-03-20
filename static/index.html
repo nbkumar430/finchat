@@ -1084,6 +1084,9 @@ function setAuthTab(mode) {
   document.getElementById('tabLogin').classList.toggle('active', mode === 'login');
   document.getElementById('tabRegister').classList.toggle('active', mode === 'register');
   document.getElementById('authTitle').textContent = mode === 'login' ? 'Sign in to FinChat' : 'Create your account';
+  const passInput = document.getElementById('authPass');
+  passInput.setAttribute('autocomplete', mode === 'register' ? 'new-password' : 'current-password');
+  passInput.placeholder = mode === 'register' ? 'Passcode (8+ chars, mixed case, number)' : 'Passcode';
 }
 
 async function submitAuth() {
@@ -1093,8 +1096,8 @@ async function submitAuth() {
   err.textContent = '';
   if (u.length < 1 || p.length < 1) { err.textContent = 'Enter username and passcode.'; return; }
   const path = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
-  if (authMode === 'register' && (u.length < 3 || p.length < 4)) {
-    err.textContent = 'Username ≥3 chars, passcode ≥4.'; return;
+  if (authMode === 'register' && u.length < 3) {
+    err.textContent = 'Username must be at least 3 characters.'; return;
   }
   const r = await api(path, { method: 'POST', body: JSON.stringify({ username: u, passcode: p }) });
   const data = await r.json().catch(() => ({}));

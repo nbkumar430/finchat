@@ -8,6 +8,7 @@ Instrumented with Prometheus metrics and structured logging.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
 from typing import Annotated, Optional
@@ -89,6 +90,34 @@ _OUT_OF_SCOPE_MSG = (
     "Apple (AAPL), Microsoft (MSFT), Amazon (AMZN), Netflix (NFLX), "
     "Nvidia (NVDA), Intel (INTC), or IBM."
 )
+
+_COMMON_WEAK_PASSCODES: frozenset[str] = frozenset(
+    {
+        "admin",
+        "password",
+        "password123",
+        "12345678",
+        "123456789",
+        "qwerty",
+        "letmein",
+        "welcome",
+    }
+)
+
+
+def _validate_register_passcode(username: str, passcode: str) -> None:
+    """Reject weak passcodes that trigger browser compromise warnings often."""
+    candidate = passcode.strip()
+    uname = username.strip().lower()
+    if len(candidate) < 8:
+        raise HTTPException(status_code=400, detail="Passcode must be at least 8 characters")
+    if candidate.lower() in _COMMON_WEAK_PASSCODES or candidate.lower() == uname:
+        raise HTTPException(status_code=400, detail="Choose a stronger passcode")
+    # Require mixed character classes to discourage trivial/reused credentials.
+    if not re.search(r"[A-Z]", candidate) or not re.search(r"[a-z]", candidate):
+        raise HTTPException(status_code=400, detail="Use both uppercase and lowercase letters")
+    if not re.search(r"\d", candidate):
+        raise HTTPException(status_code=400, detail="Include at least one number")
 
 
 def _build_headline_only_answer(query: str, sources: list[ArticleRef]) -> str:
@@ -343,6 +372,7 @@ async def auth_me(
 async def auth_register(body: RegisterRequest, db: Annotated[Session, Depends(get_db_required)]):
     if chat_repository.get_user_by_username(db, body.username) is not None:
         raise HTTPException(status_code=409, detail="Username already taken")
+    _validate_register_passcode(body.username, body.passcode)
     user = chat_repository.create_user(db, username=body.username, passcode=body.passcode, is_admin=False)
     token = create_auth_token(
         user_id=user.id,

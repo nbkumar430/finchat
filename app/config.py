@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     )
     auth_cookie_name: str = Field(default="finchat_auth", validation_alias="FINCHAT_AUTH_COOKIE")
     auth_token_max_age_seconds: int = Field(default=7 * 24 * 3600, validation_alias="FINCHAT_AUTH_MAX_AGE_SECONDS")
-    admin_initial_passcode: str = Field(default="admin", validation_alias="ADMIN_INITIAL_PASSCODE")
+    admin_initial_passcode: str = Field(default="change-me-finchat-admin-2026", validation_alias="ADMIN_INITIAL_PASSCODE")
     auth_cookie_secure: bool = Field(default=False, validation_alias="FINCHAT_AUTH_COOKIE_SECURE")
 
     # Public URLs for admin traceability (set on Cloud Run after deploy; see CI/CD)
