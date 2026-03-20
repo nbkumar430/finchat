@@ -5,6 +5,7 @@ FROM grafana/grafana:11.4.0
 USER root
 
 COPY --from=prom /bin/prometheus /usr/local/bin/prometheus
+RUN /usr/local/bin/prometheus --version >/dev/null
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod 0755 /entrypoint.sh /usr/local/bin/prometheus
 

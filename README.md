@@ -34,6 +34,7 @@ Push to `main` triggers the CI/CD pipeline: lint → test → build → deploy t
 Required GitHub Secrets:
 - `WIF_PROVIDER`: Workload Identity Federation provider resource name
 - `WIF_SA_EMAIL`: Service account email for deployments
+- `GRAFANA_ADMIN_PASSWORD` (recommended): Used to deploy Grafana when GCP Secret Manager is missing **or** when `finchat-app-sa` cannot read `GRAFANA_ADMIN_PASSWORD` in Secret Manager (CI retries automatically).
 - `BILLING_EXPORT_TABLE` (optional): BigQuery billing export table as `project.dataset.table`
 - `SENDGRID_API_KEY` (optional): for daily billing email delivery
 

@@ -1,8 +1,9 @@
 #!/bin/sh
 # Start a local Prometheus that scrapes the FinChat app's /metrics (HTTPS), then Grafana.
 # Grafana datasource points at http://127.0.0.1:9090 (see provisioning/datasources/prometheus.yml).
+# Prometheus is best-effort: if it fails, Grafana still starts (panels may be empty).
 
-set -eu
+set -e
 
 BASE="${FINCHAT_APP_BASE_URL:-http://host.docker.internal:8080}"
 # Normalize: strip trailing slash
@@ -28,11 +29,16 @@ scrape_configs:
       - targets: ['${HOST_PORT}']
 EOF
 
-echo "entrypoint: Prometheus scraping ${SCHEME}://${HOST_PORT}/metrics -> Grafana datasource http://127.0.0.1:9090"
-/usr/local/bin/prometheus \
-  --config.file=/tmp/prom-finchat.yml \
-  --storage.tsdb.path=/tmp/prom-tsdb \
-  --web.listen-address=127.0.0.1:9090 \
-  >/tmp/prometheus.log 2>&1 &
+if [ -x /usr/local/bin/prometheus ]; then
+  echo "entrypoint: Prometheus scraping ${SCHEME}://${HOST_PORT}/metrics -> Grafana datasource http://127.0.0.1:9090"
+  /usr/local/bin/prometheus \
+    --config.file=/tmp/prom-finchat.yml \
+    --storage.tsdb.path=/tmp/prom-tsdb \
+    --web.listen-address=127.0.0.1:9090 \
+    >/tmp/prometheus.log 2>&1 &
+  echo "entrypoint: Prometheus pid $!"
+else
+  echo "entrypoint: WARN prometheus binary missing; starting Grafana only."
+fi
 
 exec /run.sh
