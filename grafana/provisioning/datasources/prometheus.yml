@@ -9,3 +9,7 @@ datasources:
     url: http://127.0.0.1:9090
     isDefault: true
     editable: true
+    jsonData:
+      # Align with sidecar scrape interval; reduces query load on small Cloud Run instances.
+      timeInterval: 30s
+      httpMethod: POST

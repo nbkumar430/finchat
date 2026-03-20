@@ -15,13 +15,16 @@ COPY dashboards/ /var/lib/grafana/dashboards/
 
 # Sidecar Prometheus listens here; datasource uses this URL.
 # Prototype defaults (override in Cloud Run for production): Grafana UI login admin / admin.
+# GF_SERVER_ROOT_URL MUST be the public URL of this Cloud Run service (CI sets after deploy).
 ENV GF_SERVER_HTTP_PORT=3000 \
     GF_SECURITY_ADMIN_USER=admin \
     GF_SECURITY_ADMIN_PASSWORD=admin \
     GF_AUTH_ANONYMOUS_ENABLED=false \
     GF_SECURITY_ALLOW_EMBEDDING=true \
     GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s/ \
-    GF_LOG_LEVEL=warn
+    GF_LOG_LEVEL=warn \
+    GF_ANALYTICS_REPORTING_ENABLED=false \
+    GF_ANALYTICS_CHECK_FOR_UPDATES=false
 
 # Set at deploy time to your FinChat app base URL, e.g. https://finchat-app-xxx.run.app
 ENV FINCHAT_APP_BASE_URL=http://host.docker.internal:8080

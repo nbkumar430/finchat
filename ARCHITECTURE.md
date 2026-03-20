@@ -74,7 +74,18 @@ summarization escalates to a *general supplement* path. API responses and the we
 
 The Cloud Run Grafana image runs a **local Prometheus sidecar** (started by `grafana/entrypoint.sh`) that scrapes the **FinChat app’s `/metrics`** over HTTPS (`FINCHAT_APP_BASE_URL`). Grafana’s Prometheus datasource targets **`http://127.0.0.1:9090`** (the sidecar), which fixes “empty / broken panels” when the datasource incorrectly pointed at raw `/metrics` text.
 
-After deploy, CI sets **`GF_SERVER_ROOT_URL`** to the Grafana service URL so static assets load correctly (avoids “failed to load application files”). The FinChat app receives **`GRAFANA_PUBLIC_URL`** and **`FINCHAT_APP_PUBLIC_URL`** for **admin traceability** links in the UI (`GET /api/admin/traceability`).
+After deploy, CI sets **`GF_SERVER_ROOT_URL`** to the public Grafana URL **with a trailing slash** (same revision chain as `FINCHAT_APP_BASE_URL`) so static assets load correctly (avoids “failed to load application files”). The FinChat app receives **`GRAFANA_PUBLIC_URL`** and **`FINCHAT_APP_PUBLIC_URL`** for **admin traceability** links in the UI (`GET /api/admin/traceability`).
+
+**Operational tuning (optional env on the Grafana Cloud Run service):**
+
+| Variable | Purpose |
+|----------|---------|
+| `FINCHAT_PROMETHEUS_SCRAPE_INTERVAL` / `FINCHAT_PROMETHEUS_SCRAPE_TIMEOUT` | Defaults `30s` — increase if FinChat cold-starts delay first scrape. |
+| `FINCHAT_PROMETHEUS_RETENTION` | Sidecar TSDB retention (default `4h`) to cap memory. |
+| `FINCHAT_PROMETHEUS_INSECURE_SKIP_VERIFY` | Set to `true` only if scraping HTTPS must skip TLS verify (non-prod). |
+| `ENTRYPOINT_DEBUG` | Set to `1` to print generated Prometheus config to stderr (logs). |
+
+**CLI diagnostics:** `./scripts/diagnose-grafana.sh` (with `gcloud` auth; optional `PROJECT_ID`, `REGION`).
 
 **Prototype:** Grafana uses standard UI login with **`admin` / `admin`** (set by CI/CD env vars). For production, use a strong password and Secret Manager — never ship default creds on a public URL.
 

@@ -160,23 +160,23 @@ jobs:
           curl -fsSL "${APP_URL}/health" > /tmp/app-health-pre-grafana.json
           curl -fsSL "${APP_URL}/openapi.json" > /tmp/openapi-pre-grafana.json
 
-      # Deploy Grafana to Cloud Run (prototype: admin / admin — no Secret Manager required)
+      # Deploy Grafana to Cloud Run (prototype: admin / admin — change for production).
+      # One revision for image + creds, then immediate env update with GF_SERVER_ROOT_URL (trailing /)
+      # so static assets load; then wire FinChat admin traceability URLs.
       - name: Deploy Grafana to Cloud Run
         id: deploy_grafana
-        continue-on-error: true
         run: |
           set -euo pipefail
           APP_URL="${{ steps.deploy_app.outputs.app_url }}"
           IMG="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.GRAFANA_IMAGE }}:${{ github.sha }}"
 
-          # Plaintext prototype credentials (change before any non-demo deployment).
           gcloud run deploy ${{ env.GRAFANA_SERVICE }} \
             --image "$IMG" \
             --region ${{ env.REGION }} \
             --platform managed \
             --allow-unauthenticated \
             --port 3000 \
-            --memory 1Gi \
+            --memory 2Gi \
             --cpu 1 \
             --cpu-boost \
             --timeout 300 \
@@ -186,27 +186,18 @@ jobs:
             --set-env-vars "FINCHAT_APP_BASE_URL=${APP_URL},GF_SECURITY_ADMIN_USER=admin,GF_SECURITY_ADMIN_PASSWORD=admin"
 
           GRAFANA_URL=$(gcloud run services describe ${{ env.GRAFANA_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')
-          echo "grafana_url=${GRAFANA_URL}" >> "$GITHUB_OUTPUT"
+          GRAFANA_ROOT="${GRAFANA_URL%/}/"
+          echo "Grafana URL: ${GRAFANA_URL} (GF_SERVER_ROOT_URL=${GRAFANA_ROOT})"
 
-      - name: Pin Grafana ROOT_URL + wire FinChat observability env
-        if: steps.deploy_grafana.outcome == 'success'
-        run: |
-          set -euo pipefail
-          GRAFANA_URL=$(gcloud run services describe ${{ env.GRAFANA_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')
-          APP_URL="${{ steps.deploy_app.outputs.app_url }}"
           gcloud run services update ${{ env.GRAFANA_SERVICE }} \
             --region ${{ env.REGION }} \
-            --update-env-vars "GF_SERVER_ROOT_URL=${GRAFANA_URL},FINCHAT_APP_BASE_URL=${APP_URL}"
+            --update-env-vars "GF_SERVER_ROOT_URL=${GRAFANA_ROOT},FINCHAT_APP_BASE_URL=${APP_URL}"
+
           gcloud run services update ${{ env.APP_SERVICE }} \
             --region ${{ env.REGION }} \
             --update-env-vars "GRAFANA_PUBLIC_URL=${GRAFANA_URL},FINCHAT_APP_PUBLIC_URL=${APP_URL}"
 
-      - name: Report Grafana deploy outcome
-        if: always()
-        run: |
-          if [[ "${{ steps.deploy_grafana.outcome }}" != "success" ]]; then
-            echo "Grafana deployment did not succeed; app deployment remains available."
-          fi
+          echo "grafana_url=${GRAFANA_URL}" >> "$GITHUB_OUTPUT"
 
       - name: Print service URLs
         id: urls
@@ -239,9 +230,12 @@ jobs:
           echo "Checking Swagger OpenAPI endpoint..."
           curl --retry 2 --retry-delay 2 --retry-all-errors -fsSL "${APP_URL}/openapi.json" > /tmp/openapi.json
           if [[ "${GRAFANA_URL}" != "unavailable" ]]; then
-            echo "Checking Grafana root..."
-            if ! curl --retry 3 --retry-delay 5 --retry-all-errors -fsSLI "${GRAFANA_URL}" > /tmp/grafana-head.txt; then
-              echo "::warning::Grafana HEAD check failed after retries (cold start or service error); app deploy is still OK."
+            echo "Checking Grafana /api/health..."
+            if ! curl --retry 4 --retry-delay 5 --retry-all-errors -fsSL "${GRAFANA_URL}/api/health" > /tmp/grafana-health.json; then
+              echo "::warning::Grafana health check failed after retries (cold start or config); app deploy is still OK."
+            else
+              head -c 300 /tmp/grafana-health.json || true
+              echo ""
             fi
           else
             echo "Skipping Grafana smoke check because URL is unavailable."
@@ -280,7 +274,7 @@ jobs:
                   "checks": [
                       f"GET {app_url}/health",
                       f"GET {app_url}/openapi.json",
-                      f"HEAD {grafana_url}",
+                      f"GET {grafana_url}/api/health",
                   ],
               },
           }
@@ -315,7 +309,7 @@ jobs:
             echo "### Smoke Test"
             echo "- App health: \`GET ${APP_URL}/health\`"
             echo "- OpenAPI: \`GET ${APP_URL}/openapi.json\`"
-            echo "- Grafana: \`HEAD ${GRAFANA_URL}\`"
+            echo "- Grafana: \`GET ${GRAFANA_URL}/api/health\`"
             echo ""
             echo "### Build Info"
             echo "- Commit SHA: \`${GITHUB_SHA}\`"
