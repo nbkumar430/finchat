@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import secrets
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
-from app.orm_models import ChatMessageORM, ChatSessionORM
+from app.auth_tokens import hash_passcode
+from app.orm_models import ChatMessageORM, ChatSessionORM, UserORM
 from app.schemas import ArticleRef, ChatMessageRead
 
 
@@ -17,9 +19,67 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def create_session(db: Session, title: Optional[str] = None) -> ChatSessionORM:
+DEV_AUTOLOGIN_USERNAME = "_finchat_dev"
+
+
+def create_user(
+    db: Session,
+    *,
+    username: str,
+    passcode: str,
+    is_admin: bool = False,
+) -> UserORM:
+    row = UserORM(
+        id=str(uuid.uuid4()),
+        username=username,
+        password_hash=hash_passcode(passcode),
+        is_admin=is_admin,
+        created_at=_utcnow(),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def get_user_by_username(db: Session, username: str) -> Optional[UserORM]:
+    stmt = select(UserORM).where(UserORM.username == username)
+    return db.scalars(stmt).first()
+
+
+def get_user_by_id(db: Session, user_id: str) -> Optional[UserORM]:
+    return db.get(UserORM, user_id)
+
+
+def seed_default_admin(db: Session, *, passcode: str) -> None:
+    """Create ``admin`` once if missing (bootstrap)."""
+    if get_user_by_username(db, "admin") is not None:
+        return
+    create_user(db, username="admin", passcode=passcode, is_admin=True)
+
+
+def ensure_dev_autologin_user(db: Session) -> UserORM:
+    """Synthetic user when FINCHAT_REQUIRE_AUTH=false (tests / local automation)."""
+    u = get_user_by_username(db, DEV_AUTOLOGIN_USERNAME)
+    if u is not None:
+        return u
+    return create_user(
+        db,
+        username=DEV_AUTOLOGIN_USERNAME,
+        passcode=secrets.token_urlsafe(32),
+        is_admin=False,
+    )
+
+
+def create_session(db: Session, user_id: str, title: Optional[str] = None) -> ChatSessionORM:
     sid = str(uuid.uuid4())
-    row = ChatSessionORM(id=sid, title=title, created_at=_utcnow(), updated_at=_utcnow())
+    row = ChatSessionORM(
+        id=sid,
+        user_id=user_id,
+        title=title,
+        created_at=_utcnow(),
+        updated_at=_utcnow(),
+    )
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -28,6 +88,29 @@ def create_session(db: Session, title: Optional[str] = None) -> ChatSessionORM:
 
 def get_session(db: Session, session_id: str) -> Optional[ChatSessionORM]:
     return db.get(ChatSessionORM, session_id)
+
+
+def get_session_for_access(db: Session, session_id: str, user: UserORM) -> Optional[ChatSessionORM]:
+    sess = db.get(ChatSessionORM, session_id)
+    if sess is None:
+        return None
+    if user.is_admin:
+        return sess
+    if sess.user_id == user.id:
+        return sess
+    return None
+
+
+def list_chat_sessions(db: Session, user: UserORM, limit: int = 100) -> list[ChatSessionORM]:
+    stmt = (
+        select(ChatSessionORM)
+        .options(joinedload(ChatSessionORM.owner))
+        .order_by(ChatSessionORM.updated_at.desc())
+        .limit(limit)
+    )
+    if not user.is_admin:
+        stmt = stmt.where(ChatSessionORM.user_id == user.id)
+    return list(db.scalars(stmt).unique().all())
 
 
 def touch_session(db: Session, session_id: str) -> None:
@@ -47,10 +130,15 @@ def append_message(
     answer_source: Optional[str] = None,
     sources: Optional[list[ArticleRef]] = None,
     fallback_mode: Optional[bool] = None,
+    summarization_attribution: Optional[str] = None,
 ) -> ChatMessageORM:
     payload: Optional[dict[str, Any]] = None
-    if sources:
-        payload = {"sources": [s.model_dump() for s in sources]}
+    if sources or summarization_attribution:
+        payload = {}
+        if sources:
+            payload["sources"] = [s.model_dump() for s in sources]
+        if summarization_attribution:
+            payload["attribution"] = summarization_attribution
     msg = ChatMessageORM(
         session_id=session_id,
         role=role,
@@ -85,6 +173,8 @@ def orm_message_to_read(m: ChatMessageORM) -> ChatMessageRead:
     sources: list[ArticleRef] = []
     raw = m.sources_json or {}
     blob = raw.get("sources")
+    attr = raw.get("attribution")
+    summarization_attribution = attr if isinstance(attr, str) else None
     if isinstance(blob, list):
         for item in blob:
             if isinstance(item, dict):
@@ -99,6 +189,7 @@ def orm_message_to_read(m: ChatMessageORM) -> ChatMessageRead:
         ticker_filter=m.ticker_filter,
         answer_source=m.answer_source,
         fallback_mode=m.fallback_mode,
+        summarization_attribution=summarization_attribution,
         sources=sources,
         created_at=m.created_at,
     )

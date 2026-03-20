@@ -14,6 +14,7 @@ def isolated_chat_sqlite(tmp_path, monkeypatch):
     """Fresh SQLite DB per test for chat session persistence."""
     monkeypatch.setenv("CHAT_SQLITE_PATH", str(tmp_path / "chat_test.sqlite3"))
     monkeypatch.setenv("CHAT_SESSIONS_ENABLED", "true")
+    monkeypatch.setenv("FINCHAT_REQUIRE_AUTH", "false")
     get_settings.cache_clear()
     reset_for_tests()
     configure_engine(get_settings())
@@ -71,9 +72,9 @@ def test_chat_missing_query(client):
     assert resp.status_code == 422
 
 
-@patch("app.main.summarize_news")
+@patch("app.main.summarize_with_json_first_policy")
 def test_chat_success(mock_summarize, client):
-    mock_summarize.return_value = "Apple announced a new product."
+    mock_summarize.return_value = ("Apple announced a new product.", "Gemini · test · JSON-grounded")
     resp = client.post("/api/chat", json={"query": "What is Apple doing?", "ticker": "AAPL"})
     assert resp.status_code == 200
     data = resp.json()
@@ -96,7 +97,10 @@ def test_chat_unknown_session_returns_404(client):
     assert resp.status_code == 404
 
 
-@patch("app.main.summarize_news", return_value="Thread reply.")
+@patch(
+    "app.main.summarize_with_json_first_policy",
+    return_value=("Thread reply.", "Gemini · test"),
+)
 def test_session_create_and_messages(mock_summarize, client):
     r = client.post("/api/sessions")
     assert r.status_code == 200
@@ -112,7 +116,7 @@ def test_session_create_and_messages(mock_summarize, client):
     assert "user" in roles and "assistant" in roles
 
 
-@patch("app.main.summarize_news", side_effect=Exception("API error"))
+@patch("app.main.summarize_with_json_first_policy", side_effect=Exception("API error"))
 def test_chat_vertex_failure(mock_summarize, client):
     """When Gemini fails, extractive TF-IDF answer is returned (still grounded)."""
     resp = client.post("/api/chat", json={"query": "Tell me about Apple"})
@@ -176,7 +180,10 @@ def test_guardrail_supported_tickers_pass(client):
         ("IBM cloud strategy", "IBM"),
     ]
     for query, ticker in supported:
-        with patch("app.main.summarize_news", return_value=f"Summary for {ticker}."):
+        with patch(
+            "app.main.summarize_with_json_first_policy",
+            return_value=(f"Summary for {ticker}.", "test"),
+        ):
             resp = client.post("/api/chat", json={"query": query, "ticker": ticker})
             assert resp.status_code == 200, f"Expected 200 for {ticker}"
             data = resp.json()
@@ -196,7 +203,10 @@ def test_guardrail_company_name_in_query_passes(client):
         "Intel chip roadmap",
     ]
     for query in company_queries:
-        with patch("app.main.summarize_news", return_value="Some financial summary."):
+        with patch(
+            "app.main.summarize_with_json_first_policy",
+            return_value=("Some financial summary.", "test"),
+        ):
             resp = client.post("/api/chat", json={"query": query})
             assert resp.status_code in (200, 503), f"Unexpected status for query: {query}"
             data = resp.json()
@@ -208,7 +218,10 @@ def test_guardrail_company_name_in_query_passes(client):
 def test_guardrail_case_insensitive_ticker(client):
     """Ticker matching must be case-insensitive."""
     for ticker_input in ("aapl", "Aapl", "AAPL"):
-        with patch("app.main.summarize_news", return_value="Apple summary."):
+        with patch(
+            "app.main.summarize_with_json_first_policy",
+            return_value=("Apple summary.", "test"),
+        ):
             resp = client.post("/api/chat", json={"query": "Apple news", "ticker": ticker_input})
             assert resp.status_code == 200
             data = resp.json()

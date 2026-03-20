@@ -19,6 +19,8 @@ ignore = ["E501", "UP017"]
 "app/database.py" = ["UP007"]
 "app/main.py" = ["UP007"]
 "app/openrouter_client.py" = ["UP007"]
+"app/auth_deps.py" = ["UP007"]
+"app/config.py" = ["UP007"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

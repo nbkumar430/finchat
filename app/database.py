@@ -7,7 +7,7 @@ import os
 from collections.abc import Generator
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -65,10 +65,28 @@ def configure_engine(settings: Settings) -> None:
     logger.info("Chat database engine configured at %s", path)
 
 
+def _migrate_sqlite_schema(engine: Engine) -> None:
+    """Lightweight migrations for existing SQLite files (CREATE_ALL skips alters)."""
+    if not str(engine.url).startswith("sqlite"):
+        return
+    try:
+        insp = inspect(engine)
+        tables = insp.get_table_names()
+        if "chat_sessions" in tables:
+            cols = {c["name"] for c in insp.get_columns("chat_sessions")}
+            if "user_id" not in cols:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE chat_sessions ADD COLUMN user_id VARCHAR(36)"))
+                logger.info("Migration: added chat_sessions.user_id")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("SQLite schema migration: %s", exc)
+
+
 def init_db() -> None:
     if _engine is None:
         return
     Base.metadata.create_all(bind=_engine)
+    _migrate_sqlite_schema(_engine)
     logger.info("Chat database tables ready")
 
 

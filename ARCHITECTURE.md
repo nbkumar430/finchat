@@ -7,6 +7,12 @@ questions about recent stock news, and the system returns grounded, summarized r
 using Google Vertex AI (Gemini) with optional **Gemini API (AI Studio) fallback**
 when Vertex model IDs are unavailable or quotas differ. See [docs/AI_SUMMARIZATION.md](docs/AI_SUMMARIZATION.md).
 
+**JSON-first answers:** Chat retrieval ranks bundled `stock_news.json` by title/question overlap
+and passes article **`full_text`** plus **source links** into the model. A *strict* prompt answers
+only from that context; if the match is weak or the model signals insufficient coverage,
+summarization escalates to a *general supplement* path. API responses and the web UI include
+**`summarization_attribution`** (e.g. JSON-grounded vs supplemented, model label).
+
 ---
 
 ## Architecture Diagram
@@ -44,7 +50,7 @@ when Vertex model IDs are unavailable or quotas differ. See [docs/AI_SUMMARIZATI
 | `openrouter_client.py` | OpenRouter HTTP API (`OPEN_ROUTER_API_KEY` env) |
 
 **Cloud Run (OpenRouter):** set `OPEN_ROUTER_API_KEY`, `SUMMARIZATION_PROVIDER=openrouter`, and optional `OPENROUTER_MODEL` (default in code: `google/gemini-3-flash-preview`). CI uses `--update-env-vars` so console-set secrets/env merge with the deploy step.
-| `news_store.py`   | In-memory article index with keyword search          |
+| `news_store.py`   | In-memory article index; `search_json_priority()` for title-weighted JSON-first retrieval (`strong` / `weak` / `minimal` / `none`) |
 | `schemas.py`      | Pydantic request/response models (OpenAPI/Swagger)   |
 | `metrics.py`      | Prometheus counters, histograms, gauges              |
 | `logging_config.py`| Structured JSON logging (Cloud Logging compatible)  |
@@ -63,6 +69,10 @@ when Vertex model IDs are unavailable or quotas differ. See [docs/AI_SUMMARIZATI
 - **Disaster recovery / Cloud Run**: set `GCS_CHAT_DB_BUCKET`, `GCS_CHAT_DB_OBJECT`, `RESTORE_CHAT_DB_FROM_GCS=true` to download DB on startup; `BACKUP_CHAT_DB_ON_SHUTDOWN=true` uploads on shutdown (best-effort). Service account needs `storage.objectAdmin` (or narrower) on the bucket.
 
 ### 2. Grafana Dashboard (`grafana/`)
+
+The Cloud Run Grafana image runs a **local Prometheus sidecar** (started by `grafana/entrypoint.sh`) that scrapes the **FinChat app’s `/metrics`** over HTTPS (`FINCHAT_APP_BASE_URL`). Grafana’s Prometheus datasource targets **`http://127.0.0.1:9090`** (the sidecar), which fixes “empty / broken panels” when the datasource incorrectly pointed at raw `/metrics` text.
+
+After deploy, CI sets **`GF_SERVER_ROOT_URL`** to the Grafana service URL so static assets load correctly (avoids “failed to load application files”). The FinChat app receives **`GRAFANA_PUBLIC_URL`** and **`FINCHAT_APP_PUBLIC_URL`** for **admin traceability** links in the UI (`GET /api/admin/traceability`).
 
 Pre-provisioned dashboard covering the **Four Golden Signals**:
 

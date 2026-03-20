@@ -50,7 +50,7 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --role="roles/aiplatform.user" \
   --condition=None --quiet
 
-# Grant Secret Manager access to runtime SA
+# Grant Secret Manager access to runtime SA (project-wide — required for Cloud Run --set-secrets)
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${APP_SA_EMAIL}" \
   --role="roles/secretmanager.secretAccessor" \
@@ -83,6 +83,17 @@ gcloud secrets create GEMINI_API_KEY \
 gcloud secrets create GRAFANA_ADMIN_PASSWORD \
   --replication-policy="automatic" \
   2>/dev/null || echo "Secret GRAFANA_ADMIN_PASSWORD already exists"
+
+# Per-secret accessor (helps if org policy blocks broad project bindings or bindings were removed)
+for SECRET_NAME in GEMINI_API_KEY GRAFANA_ADMIN_PASSWORD; do
+  if gcloud secrets describe "$SECRET_NAME" --project="$PROJECT_ID" >/dev/null 2>&1; then
+    gcloud secrets add-iam-policy-binding "$SECRET_NAME" \
+      --project="$PROJECT_ID" \
+      --member="serviceAccount:${APP_SA_EMAIL}" \
+      --role="roles/secretmanager.secretAccessor" \
+      --quiet
+  fi
+done
 
 echo "=== Setting up Workload Identity Federation ==="
 # Create WIF pool

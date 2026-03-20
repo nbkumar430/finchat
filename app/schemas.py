@@ -58,6 +58,10 @@ class ChatResponse(BaseModel):
         "gemini",
         description="gemini | openrouter | extractive | headlines — how the answer was produced",
     )
+    summarization_attribution: Optional[str] = Field(  # noqa: UP007
+        None,
+        description="Human-readable line: model + whether answer is JSON-grounded or supplemented",
+    )
     session_id: Optional[str] = Field(  # noqa: UP007
         None,
         description="Chat thread ID when persistence is enabled; pass on the next request to continue the thread",
@@ -71,6 +75,67 @@ class SessionCreateResponse(BaseModel):
     created_at: datetime
 
 
+class RegisterRequest(BaseModel):
+    """Create an account (first-time / additional users)."""
+
+    username: str = Field(
+        ...,
+        min_length=3,
+        max_length=64,
+        pattern=r"^[a-zA-Z0-9_-]+$",
+        description="Letters, numbers, underscore, hyphen",
+    )
+    passcode: str = Field(..., min_length=4, max_length=128)
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=64)
+    passcode: str = Field(..., min_length=1, max_length=128)
+
+
+class AuthUserRead(BaseModel):
+    username: str
+    is_admin: bool
+
+
+class AuthMeResponse(BaseModel):
+    user: Optional[AuthUserRead] = None  # noqa: UP007
+
+
+class ChatSessionSummary(BaseModel):
+    session_id: str
+    title: Optional[str] = None  # noqa: UP007
+    updated_at: datetime
+    owner_username: Optional[str] = None  # noqa: UP007 — set for admin view (all users)
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[ChatSessionSummary]
+
+
+class AdminTraceabilityResponse(BaseModel):
+    """Admin-only links tying chat traffic to Prometheus metrics + Grafana dashboards."""
+
+    grafana_home_url: str = Field(..., description="Grafana UI (Cloud Run service)")
+    grafana_golden_signals_url: str = Field(
+        ...,
+        description="Deep link to the FinChat four golden signals dashboard",
+    )
+    app_metrics_url: str = Field(
+        ...,
+        description="FinChat Prometheus exposition endpoint (raw metrics text)",
+    )
+    api_docs_url: str = Field(default="/docs", description="OpenAPI docs path (same origin as FinChat app)")
+    traceability_note: str = Field(
+        default=(
+            "Flow: FinChat HTTP handlers emit Prometheus metrics on /metrics → "
+            "Prometheus sidecar inside the Grafana Cloud Run container scrapes that URL → "
+            "Grafana queries the local Prometheus (Golden Signals dashboard). "
+            "Log in to Grafana as admin if you need to edit dashboards (password in Secret Manager / bootstrap)."
+        ),
+    )
+
+
 class ChatMessageRead(BaseModel):
     """One persisted chat turn (user or assistant)."""
 
@@ -80,6 +145,7 @@ class ChatMessageRead(BaseModel):
     ticker_filter: Optional[str] = None  # noqa: UP007
     answer_source: Optional[str] = None  # noqa: UP007
     fallback_mode: Optional[bool] = None  # noqa: UP007
+    summarization_attribution: Optional[str] = None  # noqa: UP007
     sources: list[ArticleRef] = Field(default_factory=list)
     created_at: datetime
 

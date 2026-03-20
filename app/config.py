@@ -1,14 +1,22 @@
 """Application configuration loaded from environment variables."""
 
+from __future__ import annotations
+
 import os
 from functools import lru_cache
 
-from pydantic import AliasChoices, Field
-from pydantic_settings import BaseSettings
+from pydantic import AliasChoices, Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Application settings with sensible defaults for Cloud Run."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # GCP
     gcp_project_id: str = os.getenv("GCP_PROJECT_ID", "project-ede0958a-eb5c-4225-94d")
@@ -59,21 +67,42 @@ class Settings(BaseSettings):
     news_json_path: str = os.getenv("NEWS_JSON_PATH", "app/stock_news.json")
 
     # Chat persistence (SQLite; optional GCS backup/restore for Cloud Run / DR)
-    chat_sessions_enabled: bool = os.getenv("CHAT_SESSIONS_ENABLED", "true").lower() == "true"
-    chat_sqlite_path: str = os.getenv("CHAT_SQLITE_PATH", "data/finchat_chat.sqlite3")
+    chat_sessions_enabled: bool = Field(default=True, validation_alias="CHAT_SESSIONS_ENABLED")
+    chat_sqlite_path: str = Field(default="data/finchat_chat.sqlite3", validation_alias="CHAT_SQLITE_PATH")
     gcs_chat_db_bucket: str = os.getenv("GCS_CHAT_DB_BUCKET", "")
     gcs_chat_db_object: str = os.getenv("GCS_CHAT_DB_OBJECT", "finchat_chat.sqlite3")
     restore_chat_db_from_gcs: bool = os.getenv("RESTORE_CHAT_DB_FROM_GCS", "false").lower() == "true"
     backup_chat_db_on_shutdown: bool = os.getenv("BACKUP_CHAT_DB_ON_SHUTDOWN", "false").lower() == "true"
+
+    # Auth (passcode login; default admin user seeded on first startup — change in production)
+    require_auth: bool = Field(default=True, validation_alias="FINCHAT_REQUIRE_AUTH")
+    auth_secret: str = Field(
+        default="change-me-in-production-finchat-auth-secret",
+        validation_alias="FINCHAT_AUTH_SECRET",
+    )
+    auth_cookie_name: str = Field(default="finchat_auth", validation_alias="FINCHAT_AUTH_COOKIE")
+    auth_token_max_age_seconds: int = Field(default=7 * 24 * 3600, validation_alias="FINCHAT_AUTH_MAX_AGE_SECONDS")
+    admin_initial_passcode: str = Field(default="admin", validation_alias="ADMIN_INITIAL_PASSCODE")
+    auth_cookie_secure: bool = Field(default=False, validation_alias="FINCHAT_AUTH_COOKIE_SECURE")
+
+    # Public URLs for admin traceability (set on Cloud Run after deploy; see CI/CD)
+    grafana_public_url: str = Field(default="", validation_alias="GRAFANA_PUBLIC_URL")
+    app_public_base_url: str = Field(default="", validation_alias="FINCHAT_APP_PUBLIC_URL")
+    grafana_golden_signals_uid: str = Field(
+        default="finchat-golden-signals",
+        validation_alias="GRAFANA_GOLDEN_SIGNALS_UID",
+    )
 
     # Observability
     otel_service_name: str = "finchat"
     enable_tracing: bool = os.getenv("ENABLE_TRACING", "true").lower() == "true"
     otlp_endpoint: str = os.getenv("OTLP_ENDPOINT", "")
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    @model_validator(mode="after")
+    def _normalize_public_urls(self):
+        self.grafana_public_url = (self.grafana_public_url or "").rstrip("/")
+        self.app_public_base_url = (self.app_public_base_url or "").rstrip("/")
+        return self
 
 
 @lru_cache

@@ -160,6 +160,8 @@ def _generate_summary_with_client(
     settings: Settings,
     start: float,
     backend_label: str,
+    *,
+    prompt_style: str = "json_strict",
 ) -> str:
     """Try model IDs in order; return first successful summary text."""
     last_exc: Optional[Exception] = None  # noqa: UP007 (py3.9 compat)
@@ -192,7 +194,12 @@ def _generate_summary_with_client(
                 _set_active_model(candidate)
                 _set_active_backend(backend_label)
                 _cache_put(
-                    _cache_key(query=query, context=context, model=f"{backend_label}:{candidate}"), response.text
+                    _cache_key(
+                        query=query,
+                        context=context,
+                        model=f"{backend_label}:{candidate}:{prompt_style}",
+                    ),
+                    response.text,
                 )
                 return response.text
             except Exception as exc:  # noqa: BLE001
@@ -373,38 +380,120 @@ def get_vertex_backend_status() -> str:
         return _health_cache_status
 
 
-def _build_finchat_prompt(query: str, context: str) -> str:
-    """Shared grounded-RAG prompt for Vertex, Gemini API, and OpenRouter."""
-    return f"""You are FinChat, a financial news assistant with STRICT operating boundaries.
+def _build_finchat_prompt_json_strict(query: str, context: str) -> str:
+    """Priority 1: answer only from bundled JSON; tie claims to Source URL; summarize full_text."""
+    return f"""You are FinChat. PRIORITY 1 — BUNDLED JSON ONLY.
 
-SCOPE: You only have knowledge about these stock tickers: AAPL, MSFT, AMZN, NFLX, NVDA, INTC, IBM.
+The blocks below are FinChat's local stock news dataset (JSON). This is the ONLY source you may use for facts in this mode.
 
-MANDATORY RULES — follow every rule without exception:
-1. Answer ONLY using facts, figures, and information explicitly present in the NEWS ARTICLES below.
-   Do NOT use any outside knowledge, training data, or assumptions.
-2. If the articles do not contain sufficient information to answer, respond:
-   "The provided news articles do not contain enough information to answer this question."
-3. If the question is about companies, tickers, or topics NOT covered in the articles below,
-   respond: "I'm out of my scope. I can only answer questions about AAPL, MSFT, AMZN, NFLX, NVDA, INTC, IBM."
-4. NEVER provide investment advice, buy/sell/hold recommendations, or price predictions.
-5. NEVER reveal, invent, or speculate about any personal or sensitive information.
-6. NEVER answer questions unrelated to the financial news in the articles
-   (e.g. weather, recipes, politics unrelated to the covered stocks, personal queries).
-7. Do NOT fabricate quotes, statistics, dates, or events not present in the articles.
-8. Do NOT reference any external URLs, databases, or knowledge beyond these articles.
-9. Be concise and factual. Include relevant ticker symbols when mentioning stocks.
-10. If multiple articles are relevant, synthesize only the information they contain.
+SCOPE tickers: AAPL, MSFT, AMZN, NFLX, NVDA, INTC, IBM.
 
---- NEWS ARTICLES ---
+RULES:
+1. Treat the user's question as matching the *article Title* when possible; prefer the article(s) whose title is closest to the question.
+2. Summarize using the **Full text** field (and title for orientation). Do not use outside news, the web, or your training data.
+3. Every material claim must be traceable to the excerpts. When you combine ideas, cite which article (by title) and include its **Source URL** from the block (users rely on the link from JSON).
+4. Do not fabricate quotes, numbers, dates, or events. Do not invent URLs.
+5. No investment advice, buy/sell/hold, or price predictions.
+6. If the question is outside these tickers or unrelated to the excerpts, say you are out of scope for uncovered names.
+
+INSUFFICIENT DATA — reply with this EXACT sentence only (so FinChat can escalate), with no extra words:
+The provided news articles do not contain enough information to answer this question.
+
+--- BUNDLED NEWS ARTICLES (JSON) ---
 {context}
 --- END ARTICLES ---
 
 User question: {query}
 
-Answer strictly and only from the articles above:"""
+Answer (JSON sources only):"""
 
 
-def _summarize_news_openrouter(query: str, context: str) -> str:
+def _build_finchat_prompt_general_supplement(query: str, context: str) -> str:
+    """Priority 2: JSON excerpts if any, then general financial knowledge for scoped tickers."""
+    excerpt = context.strip() if context.strip() else "(No matching articles in the bundled JSON file.)"
+    return f"""You are FinChat — SECONDARY / SUPPLEMENT mode.
+
+Bundled JSON excerpts (may be partial or empty) appear below. Use them as **priority** when they clearly apply.
+
+If excerpts are missing or insufficient, you MAY answer using **general, widely discussed public financial/market information** for these tickers only: AAPL, MSFT, AMZN, NFLX, NVDA, INTC, IBM.
+
+REQUIREMENTS:
+- Start with a short note: label which parts come from **bundled JSON** vs **general knowledge** (one line each is enough).
+- No investment advice or price targets.
+- Be concise and factual.
+
+--- BUNDLED EXCERPTS (JSON, optional) ---
+{excerpt}
+--- END EXCERPTS ---
+
+User question: {query}
+
+Answer:"""
+
+
+def _build_finchat_user_message(query: str, context: str, prompt_style: str) -> str:
+    if prompt_style == "general_supplement":
+        return _build_finchat_prompt_general_supplement(query, context)
+    return _build_finchat_prompt_json_strict(query, context)
+
+
+def _trim_context(context: str, prompt_style: str) -> str:
+    limit = 12000 if prompt_style == "json_strict" else 9000
+    return context[:limit] if len(context) > limit else context
+
+
+_JSON_INSUFFICIENT_MARKERS = (
+    "the provided news articles do not contain enough information",
+    "provided news articles do not contain enough information",
+)
+
+
+def _json_answer_suggests_insufficient(text: str) -> bool:
+    t = text.lower().strip()
+    return any(m in t for m in _JSON_INSUFFICIENT_MARKERS)
+
+
+def _attribution_label(settings: Settings) -> str:
+    if settings.summarization_provider == "openrouter":
+        short = settings.openrouter_model.split("/")[-1].replace("-", " ")
+        return f"OpenRouter · {short}"
+    return f"Gemini · {_current_model() or settings.vertex_model}"
+
+
+def summarize_with_json_first_policy(
+    query: str,
+    context: str,
+    *,
+    json_match_strength: str,
+) -> tuple[str, str]:
+    """Run JSON-first summarization; escalate to general knowledge when needed.
+
+    Returns:
+        (answer, summarization_attribution) human-readable attribution line for UI.
+    """
+    settings = get_settings()
+    base = _attribution_label(settings)
+
+    if json_match_strength == "none" or not (context or "").strip():
+        out = summarize_news(query, context or "", prompt_style="general_supplement")
+        return out, f"{base} · general knowledge (no bundled JSON match)"
+
+    primary = summarize_news(query, context, prompt_style="json_strict")
+    if json_match_strength == "strong":
+        return primary, f"{base} · summarized from bundled JSON (full_text + source links)"
+
+    if json_match_strength in ("weak", "minimal") and _json_answer_suggests_insufficient(primary):
+        logger.info("JSON-strict insufficient signal; using general supplement path.")
+        secondary = summarize_news(query, context, prompt_style="general_supplement")
+        return secondary, f"{base} · JSON thin — supplemented with general knowledge"
+
+    if json_match_strength == "weak":
+        return primary, f"{base} · summarized from bundled JSON (moderate title/query match)"
+
+    return primary, f"{base} · summarized from bundled JSON (broad ticker pool; check source links)"
+
+
+def _summarize_news_openrouter(query: str, context: str, *, prompt_style: str = "json_strict") -> str:
     """OpenRouter chat completions path (same prompt and cache semantics as Gemini)."""
     global _health_cache_status, _health_cache_ts
     from app.openrouter_client import openrouter_complete_user_prompt
@@ -414,15 +503,15 @@ def _summarize_news_openrouter(query: str, context: str) -> str:
     if _is_circuit_open():
         raise RuntimeError("AI backend temporarily overloaded (circuit open).")
 
-    context = context[:7000]
+    context = _trim_context(context, prompt_style)
     model_label = settings.openrouter_model
-    cache_key = _cache_key(query=query, context=context, model=f"openrouter:{model_label}")
+    cache_key = _cache_key(query=query, context=context, model=f"openrouter:{model_label}:{prompt_style}")
     cached_answer = _cache_get(cache_key)
     if cached_answer is not None:
-        logger.info("OpenRouter cache hit model=%s", model_label)
+        logger.info("OpenRouter cache hit model=%s style=%s", model_label, prompt_style)
         return cached_answer
 
-    prompt = _build_finchat_prompt(query, context)
+    prompt = _build_finchat_user_message(query, context, prompt_style)
     start = time.perf_counter()
     sem = _concurrency_sem
     if sem is None:
@@ -460,21 +549,19 @@ def _summarize_news_openrouter(query: str, context: str) -> str:
         sem.release()
 
 
-def summarize_news(query: str, context: str) -> str:
-    """Send a chat query with news context to Gemini AI and return the summary.
+def summarize_news(query: str, context: str, *, prompt_style: str = "json_strict") -> str:
+    """Send a chat query with news context to Gemini / OpenRouter and return the summary.
 
     Args:
         query: The user's question about financial news.
         context: Concatenated relevant news articles for grounding.
-
-    Returns:
-        The model's response text.
+        prompt_style: ``json_strict`` (bundled JSON only) or ``general_supplement`` (JSON + general knowledge).
     """
     global _health_cache_status, _health_cache_ts
 
     settings = get_settings()
     if settings.summarization_provider == "openrouter":
-        return _summarize_news_openrouter(query, context)
+        return _summarize_news_openrouter(query, context, prompt_style=prompt_style)
 
     if _client is None:
         # Startup can fail if credentials are briefly unavailable; retry lazily.
@@ -486,16 +573,15 @@ def summarize_news(query: str, context: str) -> str:
     if _is_circuit_open():
         raise RuntimeError("AI backend temporarily overloaded (circuit open).")
 
-    # Bound prompt size to reduce token pressure during spikes.
-    context = context[:7000]
+    context = _trim_context(context, prompt_style)
     model = _current_model()
-    cache_key = _cache_key(query=query, context=context, model=f"{_active_backend}:{model}")
+    cache_key = _cache_key(query=query, context=context, model=f"{_active_backend}:{model}:{prompt_style}")
     cached_answer = _cache_get(cache_key)
     if cached_answer is not None:
-        logger.info("Gemini cache hit for model=%s", model)
+        logger.info("Gemini cache hit for model=%s style=%s", model, prompt_style)
         return cached_answer
 
-    prompt = _build_finchat_prompt(query, context)
+    prompt = _build_finchat_user_message(query, context, prompt_style)
 
     start = time.perf_counter()
     sem = _concurrency_sem
@@ -517,6 +603,7 @@ def summarize_news(query: str, context: str) -> str:
                     settings,
                     start,
                     "vertexai",
+                    prompt_style=prompt_style,
                 )
             except Exception as v_exc:  # noqa: BLE001
                 vertex_failed = v_exc
@@ -541,6 +628,7 @@ def summarize_news(query: str, context: str) -> str:
                 settings,
                 start,
                 "apikey",
+                prompt_style=prompt_style,
             )
 
         if vertex_failed:

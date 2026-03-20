@@ -41,6 +41,31 @@ Runtime credentials are fetched from Secret Manager (not GitHub secrets):
 - `GEMINI_API_KEY`
 - `GRAFANA_ADMIN_PASSWORD`
 
+### Grafana Cloud Run: “Permission denied on secret … GRAFANA_ADMIN_PASSWORD”
+
+The **`finchat-app-sa`** service account must be able to read the secret at runtime (`roles/secretmanager.secretAccessor`). If the revision fails with that error, apply one of the following (as a project Owner or Security Admin):
+
+**Option A — project-wide (matches `scripts/setup-gcp.sh`):**
+
+```bash
+gcloud projects add-iam-policy-binding PROJECT_ID \
+  --member="serviceAccount:finchat-app-sa@PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+**Option B — this secret only (least scope):**
+
+```bash
+gcloud secrets add-iam-policy-binding GRAFANA_ADMIN_PASSWORD \
+  --project=PROJECT_ID \
+  --member="serviceAccount:finchat-app-sa@PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+Replace `PROJECT_ID` with your project (e.g. `project-ede0958a-eb5c-4225-94d`). Then **redeploy** `finchat-grafana` (re-run the GitHub Actions deploy or `gcloud run deploy …`).
+
+Browser errors like “Grafana has failed to load its application files” on the Cloud Run URL often clear once the service revision is **Ready** and serving; fix IAM first, then redeploy.
+
 ## Public URLs
 
 After deployment, fetch service URLs:

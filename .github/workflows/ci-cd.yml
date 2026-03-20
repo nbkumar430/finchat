@@ -146,12 +146,12 @@ jobs:
               --platform managed \
               --allow-unauthenticated \
               --port 3000 \
-              --memory 256Mi \
+              --memory 512Mi \
               --cpu 1 \
               --min-instances 0 \
               --max-instances 2 \
               --service-account ${{ env.APP_RUNTIME_SA }} \
-              --set-env-vars "PROMETHEUS_URL=${APP_URL}/metrics" \
+              --set-env-vars "FINCHAT_APP_BASE_URL=${APP_URL}" \
               --set-secrets "GF_SECURITY_ADMIN_PASSWORD=GRAFANA_ADMIN_PASSWORD:latest"
           else
             echo "Secret GRAFANA_ADMIN_PASSWORD not found; using GitHub secret fallback."
@@ -161,15 +161,28 @@ jobs:
               --platform managed \
               --allow-unauthenticated \
               --port 3000 \
-              --memory 256Mi \
+              --memory 512Mi \
               --cpu 1 \
               --min-instances 0 \
               --max-instances 2 \
               --service-account ${{ env.APP_RUNTIME_SA }} \
-              --set-env-vars "PROMETHEUS_URL=${APP_URL}/metrics,GF_SECURITY_ADMIN_PASSWORD=${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
+              --set-env-vars "FINCHAT_APP_BASE_URL=${APP_URL},GF_SECURITY_ADMIN_PASSWORD=${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           fi
           GRAFANA_URL=$(gcloud run services describe ${{ env.GRAFANA_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')
           echo "grafana_url=${GRAFANA_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Pin Grafana ROOT_URL + wire FinChat observability env
+        if: steps.deploy_grafana.outcome == 'success'
+        run: |
+          set -euo pipefail
+          GRAFANA_URL=$(gcloud run services describe ${{ env.GRAFANA_SERVICE }} --region ${{ env.REGION }} --format 'value(status.url)')
+          APP_URL="${{ steps.deploy_app.outputs.app_url }}"
+          gcloud run services update ${{ env.GRAFANA_SERVICE }} \
+            --region ${{ env.REGION }} \
+            --update-env-vars "GF_SERVER_ROOT_URL=${GRAFANA_URL},FINCHAT_APP_BASE_URL=${APP_URL}"
+          gcloud run services update ${{ env.APP_SERVICE }} \
+            --region ${{ env.REGION }} \
+            --update-env-vars "GRAFANA_PUBLIC_URL=${GRAFANA_URL},FINCHAT_APP_PUBLIC_URL=${APP_URL}"
 
       - name: Report Grafana deploy outcome
         if: always()

@@ -88,3 +88,16 @@ def test_search_no_results(store):
 def test_search_respects_max_results(store):
     results = store.search("Apple", max_results=1)
     assert len(results) <= 1
+
+
+def test_search_json_priority_returns_strength(store):
+    arts, strength = store.search_json_priority("iPhone", max_results=2)
+    assert len(arts) >= 1
+    assert strength in ("strong", "weak", "minimal", "none")
+
+
+def test_search_json_priority_ticker_fallback_minimal(store):
+    """Ticker filter with vague query still returns pool with minimal strength."""
+    arts, strength = store.search_json_priority("zzzthing", ticker="AAPL", max_results=3)
+    assert len(arts) >= 1
+    assert strength == "minimal"

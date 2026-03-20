@@ -18,6 +18,30 @@ class Base(DeclarativeBase):
     pass
 
 
+class UserORM(Base):
+    """End user account (passcode-based)."""
+
+    __tablename__ = "chat_users"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(512))
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utcnow,
+    )
+
+    sessions: Mapped[list["ChatSessionORM"]] = relationship(
+        "ChatSessionORM",
+        back_populates="owner",
+    )
+
+
 class ChatSessionORM(Base):
     """A logical chat thread (e.g. browser tab / user conversation)."""
 
@@ -27,6 +51,12 @@ class ChatSessionORM(Base):
         String(36),
         primary_key=True,
         default=lambda: str(uuid.uuid4()),
+    )
+    user_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey("chat_users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -39,6 +69,10 @@ class ChatSessionORM(Base):
         onupdate=_utcnow,
     )
 
+    owner: Mapped[Optional["UserORM"]] = relationship(
+        "UserORM",
+        back_populates="sessions",
+    )
     messages: Mapped[list["ChatMessageORM"]] = relationship(
         "ChatMessageORM",
         back_populates="session",
