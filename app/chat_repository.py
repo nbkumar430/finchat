@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -17,9 +16,6 @@ from app.schemas import ArticleRef, ChatMessageRead
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
-
-
-DEV_AUTOLOGIN_USERNAME = "_finchat_dev"
 
 
 def create_user(
@@ -56,19 +52,6 @@ def seed_default_admin(db: Session, *, passcode: str) -> None:
     if get_user_by_username(db, "admin") is not None:
         return
     create_user(db, username="admin", passcode=passcode, is_admin=True)
-
-
-def ensure_dev_autologin_user(db: Session) -> UserORM:
-    """Synthetic user when FINCHAT_REQUIRE_AUTH=false (tests / local automation)."""
-    u = get_user_by_username(db, DEV_AUTOLOGIN_USERNAME)
-    if u is not None:
-        return u
-    return create_user(
-        db,
-        username=DEV_AUTOLOGIN_USERNAME,
-        passcode=secrets.token_urlsafe(32),
-        is_admin=False,
-    )
 
 
 def create_session(db: Session, user_id: str, title: Optional[str] = None) -> ChatSessionORM:

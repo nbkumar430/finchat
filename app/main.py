@@ -313,7 +313,10 @@ async def list_tickers():
 )
 async def auth_config():
     st = get_settings()
-    return {"require_auth": st.require_auth}
+    return {
+        "require_auth": st.require_auth,
+        "guest_chat_allowed": not st.require_auth,
+    }
 
 
 @app.get(
@@ -436,27 +439,32 @@ async def chat(
     )
 
     session_id_out: Optional[str] = None
+    settings_chat = get_settings()
     if db is not None:
         if user is None:
-            raise HTTPException(status_code=401, detail="Login required")
-        if request.session_id:
-            sess = chat_repository.get_session_for_access(db, request.session_id, user)
-            if sess is None:
-                raise HTTPException(status_code=404, detail="Unknown session_id")
-            session_id_out = sess.id
+            if request.session_id:
+                raise HTTPException(status_code=401, detail="Sign in to continue a saved chat")
+            if settings_chat.require_auth:
+                raise HTTPException(status_code=401, detail="Login required")
         else:
-            sess = chat_repository.create_session(db, user.id)
-            session_id_out = sess.id
-        try:
-            chat_repository.append_message(
-                db,
-                session_id=session_id_out,
-                role="user",
-                content=query,
-                ticker_filter=ticker,
-            )
-        except Exception as exc:
-            logger.warning("Chat persistence failed (user turn): %s", exc)
+            if request.session_id:
+                sess = chat_repository.get_session_for_access(db, request.session_id, user)
+                if sess is None:
+                    raise HTTPException(status_code=404, detail="Unknown session_id")
+                session_id_out = sess.id
+            else:
+                sess = chat_repository.create_session(db, user.id)
+                session_id_out = sess.id
+            try:
+                chat_repository.append_message(
+                    db,
+                    session_id=session_id_out,
+                    role="user",
+                    content=query,
+                    ticker_filter=ticker,
+                )
+            except Exception as exc:
+                logger.warning("Chat persistence failed (user turn): %s", exc)
 
     def respond(
         answer: str,
@@ -590,9 +598,11 @@ async def chat(
     description=("Most recently updated first. Admins see every user's sessions with ``owner_username`` set."),
 )
 async def list_chat_sessions_endpoint(
-    user: Annotated[UserORM, Depends(get_current_user_for_persistence)],
+    user: Annotated[Optional[UserORM], Depends(get_current_user_for_persistence)],
     db: Annotated[Session, Depends(get_db_required)],
 ):
+    if user is None:
+        raise HTTPException(status_code=401, detail="Sign in to see saved chats")
     rows = chat_repository.list_chat_sessions(db, user)
     summaries: list[ChatSessionSummary] = []
     for r in rows:
@@ -616,9 +626,11 @@ async def list_chat_sessions_endpoint(
     description="Create an empty chat thread. Optional: omit otherwise /api/chat creates one automatically.",
 )
 async def create_chat_session_endpoint(
-    user: Annotated[UserORM, Depends(get_current_user_for_persistence)],
+    user: Annotated[Optional[UserORM], Depends(get_current_user_for_persistence)],
     db: Annotated[Session, Depends(get_db_required)],
 ):
+    if user is None:
+        raise HTTPException(status_code=401, detail="Sign in to create a saved chat")
     row = chat_repository.create_session(db, user.id)
     return SessionCreateResponse(session_id=row.id, created_at=row.created_at)
 
@@ -632,9 +644,11 @@ async def create_chat_session_endpoint(
 )
 async def list_chat_session_messages(
     session_id: str,
-    user: Annotated[UserORM, Depends(get_current_user_for_persistence)],
+    user: Annotated[Optional[UserORM], Depends(get_current_user_for_persistence)],
     db: Annotated[Session, Depends(get_db_required)],
 ):
+    if user is None:
+        raise HTTPException(status_code=401, detail="Sign in to load saved chats")
     if chat_repository.get_session_for_access(db, session_id, user) is None:
         raise HTTPException(status_code=404, detail="Unknown session_id")
     rows = chat_repository.list_messages(db, session_id)

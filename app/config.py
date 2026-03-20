@@ -74,8 +74,9 @@ class Settings(BaseSettings):
     restore_chat_db_from_gcs: bool = os.getenv("RESTORE_CHAT_DB_FROM_GCS", "false").lower() == "true"
     backup_chat_db_on_shutdown: bool = os.getenv("BACKUP_CHAT_DB_ON_SHUTDOWN", "false").lower() == "true"
 
-    # Auth (passcode login; default admin user seeded on first startup — change in production)
-    require_auth: bool = Field(default=True, validation_alias="FINCHAT_REQUIRE_AUTH")
+    # Auth: require_auth=true forces login before chat. Default false = optional sign-in (chat works
+    # without account; sign in to persist chats in SQLite). Admin user is seeded on startup (passcode from ADMIN_INITIAL_PASSCODE).
+    require_auth: bool = Field(default=False, validation_alias="FINCHAT_REQUIRE_AUTH")
     auth_secret: str = Field(
         default="change-me-in-production-finchat-auth-secret",
         validation_alias="FINCHAT_AUTH_SECRET",

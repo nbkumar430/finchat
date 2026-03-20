@@ -255,8 +255,7 @@
       <button type="button" class="primary" id="authSubmit">Continue</button>
     </div>
     <p style="margin-top:0.75rem;font-size:0.75rem;color:var(--muted);">
-      Default admin (first deploy): <code style="color:#cbd5e1;">admin</code> / <code style="color:#cbd5e1;">admin</code>
-      — change via <code>ADMIN_INITIAL_PASSCODE</code> and Secret Manager in production.
+      Sign in to save chats and load them on your next visit. You can try the assistant first when this server allows guest chat.
     </p>
   </div>
 </div>
@@ -271,6 +270,7 @@ const datasetBanner = document.getElementById('datasetBanner');
 const SESSION_STORAGE_KEY = 'finchat_session_id';
 
 let requireAuth = true;
+let guestChatAllowed = false;
 let currentUser = null;
 
 function getSessionId() { return sessionStorage.getItem(SESSION_STORAGE_KEY); }
@@ -331,6 +331,7 @@ async function refreshMe() {
   const cfg = await api('/api/auth/config');
   const cj = await cfg.json();
   requireAuth = !!cj.require_auth;
+  guestChatAllowed = !!cj.guest_chat_allowed;
 
   const r = await api('/api/auth/me');
   const data = await r.json();
@@ -339,11 +340,11 @@ async function refreshMe() {
   const btnLogout = document.getElementById('btnLogout');
   if (currentUser) {
     userLabel.textContent = currentUser.is_admin ? `Administrator · ${currentUser.username}` : currentUser.username;
-    btnLogout.style.display = requireAuth ? 'inline' : 'none';
+    btnLogout.style.display = 'inline';
     setAdminUi(currentUser.is_admin);
     if (currentUser.is_admin) await loadTraceability(); else clearTraceability();
   } else {
-    userLabel.textContent = requireAuth ? '(not signed in)' : '(dev: auth off)';
+    userLabel.textContent = requireAuth ? '(not signed in)' : (guestChatAllowed ? 'Guest — sign in to save chats' : '(not signed in)');
     btnLogout.style.display = 'none';
     setAdminUi(false);
     clearTraceability();

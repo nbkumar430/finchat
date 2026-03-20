@@ -14,7 +14,7 @@ def isolated_chat_sqlite(tmp_path, monkeypatch):
     """Fresh SQLite DB per test for chat session persistence."""
     monkeypatch.setenv("CHAT_SQLITE_PATH", str(tmp_path / "chat_test.sqlite3"))
     monkeypatch.setenv("CHAT_SESSIONS_ENABLED", "true")
-    monkeypatch.setenv("FINCHAT_REQUIRE_AUTH", "false")
+    monkeypatch.setenv("FINCHAT_REQUIRE_AUTH", "true")
     get_settings.cache_clear()
     reset_for_tests()
     configure_engine(get_settings())
@@ -26,11 +26,16 @@ def isolated_chat_sqlite(tmp_path, monkeypatch):
 
 @pytest.fixture
 def client():
-    """Create test client with mocked Vertex AI."""
+    """Create test client with mocked Vertex AI and admin session cookie."""
     with patch("app.main.init_vertex"):
         from app.main import app
 
         with TestClient(app) as c:
+            login = c.post(
+                "/api/auth/login",
+                json={"username": "admin", "passcode": "admin"},
+            )
+            assert login.status_code == 200, login.text
             yield c
 
 
@@ -226,3 +231,53 @@ def test_guardrail_case_insensitive_ticker(client):
             assert resp.status_code == 200
             data = resp.json()
             assert "scope" not in data["answer"].lower(), f"Ticker {ticker_input} was incorrectly blocked"
+
+
+def test_auth_config_when_require_auth_enforced(client):
+    r = client.get("/api/auth/config")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["require_auth"] is True
+    assert body["guest_chat_allowed"] is False
+
+
+def test_guest_chat_without_login_no_session_id(tmp_path, monkeypatch):
+    """When FINCHAT_REQUIRE_AUTH=false, chat works without cookie but does not persist."""
+    monkeypatch.setenv("CHAT_SQLITE_PATH", str(tmp_path / "guest.sqlite"))
+    monkeypatch.setenv("CHAT_SESSIONS_ENABLED", "true")
+    monkeypatch.setenv("FINCHAT_REQUIRE_AUTH", "false")
+    get_settings.cache_clear()
+    reset_for_tests()
+    configure_engine(get_settings())
+    init_db()
+    with patch("app.main.init_vertex"):
+        from app.main import app
+
+        with TestClient(app) as c:
+            r0 = c.get("/api/auth/config")
+            assert r0.status_code == 200
+            assert r0.json()["guest_chat_allowed"] is True
+            with patch(
+                "app.main.summarize_with_json_first_policy",
+                return_value=("Apple OK.", "test"),
+            ):
+                r = c.post("/api/chat", json={"query": "What is Apple doing?", "ticker": "AAPL"})
+            assert r.status_code == 200
+            assert not r.json().get("session_id")
+            assert c.post("/api/sessions").status_code == 401
+
+
+def test_chat_requires_login_when_require_auth_no_cookie(tmp_path, monkeypatch):
+    monkeypatch.setenv("CHAT_SQLITE_PATH", str(tmp_path / "strict.sqlite"))
+    monkeypatch.setenv("CHAT_SESSIONS_ENABLED", "true")
+    monkeypatch.setenv("FINCHAT_REQUIRE_AUTH", "true")
+    get_settings.cache_clear()
+    reset_for_tests()
+    configure_engine(get_settings())
+    init_db()
+    with patch("app.main.init_vertex"):
+        from app.main import app
+
+        with TestClient(app) as c:
+            r = c.post("/api/chat", json={"query": "What is Apple doing?", "ticker": "AAPL"})
+            assert r.status_code == 401

@@ -63,8 +63,10 @@ summarization escalates to a *general supplement* path. API responses and the we
 
 #### Chat sessions (SQLite + optional GCS)
 
-- **Local / default**: SQLite file at `CHAT_SQLITE_PATH` (default `data/finchat_chat.sqlite3`). Each `/api/chat` call creates or continues a session and stores user + assistant rows.
-- **APIs**: `POST /api/sessions`, `GET /api/sessions/{id}/messages`, `POST /api/chat` with optional `session_id`; responses include `session_id` when persistence is enabled.
+- **Local / default**: SQLite file at `CHAT_SQLITE_PATH` (default `data/finchat_chat.sqlite3`). User accounts (username + passcode hash) and sessions are stored in SQLite; signed-in users get `session_id` on chat and can list threads via the session APIs.
+- **Optional sign-in (default)**: `FINCHAT_REQUIRE_AUTH=false` — guests can use `POST /api/chat` without a cookie (no `session_id` returned); signing in restores saved chats. Set `FINCHAT_REQUIRE_AUTH=true` to require login before chat.
+- **Bootstrap admin**: On startup, an `admin` user is created if missing; initial passcode from env `ADMIN_INITIAL_PASSCODE` (override in production via Secret Manager). Do not publish default credentials in the product UI.
+- **APIs**: `POST /api/sessions`, `GET /api/sessions/{id}/messages`, `POST /api/chat` with optional `session_id`; responses include `session_id` when persistence is enabled and the caller is authenticated.
 - **Disable**: `CHAT_SESSIONS_ENABLED=false` (no DB; session APIs return 503).
 - **Disaster recovery / Cloud Run**: set `GCS_CHAT_DB_BUCKET`, `GCS_CHAT_DB_OBJECT`, `RESTORE_CHAT_DB_FROM_GCS=true` to download DB on startup; `BACKUP_CHAT_DB_ON_SHUTDOWN=true` uploads on shutdown (best-effort). Service account needs `storage.objectAdmin` (or narrower) on the bucket.
 
