@@ -6,7 +6,6 @@ import json
 import re
 from typing import Any
 
-
 _FENCE_RE = re.compile(
     r"^\s*```(?:json)?\s*\n?(.*?)\n?```\s*$",
     re.DOTALL | re.IGNORECASE,
@@ -78,7 +77,7 @@ def _json_object_to_prose(obj: dict[str, Any]) -> str:
                 continue
             if isinstance(v, str) and len(v.strip()) > 20:
                 parts.append(v.strip())
-            elif isinstance(v, (int, float)) and k.lower() not in ("status", "code"):
+            elif isinstance(v, int | float) and k.lower() not in ("status", "code"):
                 parts.append(f"{k}: {v}")
         body = "\n\n".join(parts) if parts else ""
 
@@ -94,7 +93,7 @@ def _json_object_to_prose(obj: dict[str, Any]) -> str:
         for k, v in obj.items():
             if isinstance(v, str) and v.strip():
                 lines.append(v.strip())
-            elif isinstance(v, (list, dict)):
+            elif isinstance(v, list | dict):
                 continue
             elif v is not None and str(v).strip():
                 lines.append(f"{k}: {v}")
@@ -119,9 +118,7 @@ def _collect_reference_lines(obj: dict[str, Any]) -> list[str]:
                     or item.get("article_title")
                     or "Article"
                 )
-                link = (
-                    item.get("url") or item.get("link") or item.get("source") or item.get("source_url") or ""
-                )
+                link = item.get("url") or item.get("link") or item.get("source") or item.get("source_url") or ""
                 ticker = item.get("ticker") or item.get("symbol") or ""
                 if link:
                     line = f"- {title}"
